@@ -1,4 +1,4 @@
-import { mapVehicle } from "../../libs/map.js";
+import { mapVehicle } from "../libs/map.js";
 
 export default function handler(req, res) {
   try {
