@@ -10,28 +10,49 @@ function slugify(str) {
 }
 
 export function mapVehicle(ad) {
-  // 1. ID bestimmen
-  const id = ad.id ?? ad.identifier?.internal ?? ad.identifier?.serial;
+  // ----------------------------------------------------
+  // 1) Syscara liefert häufig:
+  //    { "135965": { ... }}
+  //    → wir müssen erst das echte Fahrzeugobjekt extrahieren
+  // ----------------------------------------------------
+  let vehicleId = null;
 
-  // 2. Name bauen aus Modelldaten
+  if (typeof ad === "object" && !ad.id) {
+    const keys = Object.keys(ad);
+    if (keys.length > 0) {
+      vehicleId = keys[0];
+      ad = ad[vehicleId];
+    }
+  } else {
+    vehicleId = ad.id;
+  }
+
+  // Falls weiterhin keine ID → leerer String
+  vehicleId = vehicleId ? String(vehicleId) : "";
+
+  // ----------------------------------------------------
+  // 2) Name bauen aus Modelldaten
+  // ----------------------------------------------------
   const producer = ad.model?.producer || "";
   const series = ad.model?.series || "";
   const model = ad.model?.model || "";
   const model_add = ad.model?.model_add || "";
 
   const nameParts = [producer, series, model, model_add].filter(Boolean);
-  const name =
-    nameParts.join(" ").trim() || `Fahrzeug ${id || "ohne-id"}`;
+  const name = nameParts.join(" ").trim() || `Fahrzeug ${vehicleId || "unbekannt"}`;
 
-  // 3. Slug bauen
-  const slugBase = slugify(name || `fahrzeug-${id || "unknown"}`);
-  const slug = id ? `${id}-${slugBase}` : slugBase;
+  // ----------------------------------------------------
+  // 3) Slug bauen
+  // ----------------------------------------------------
+  const slugBase = slugify(name);
+  const slug = vehicleId ? `${vehicleId}-${slugBase}` : slugBase;
 
-  // 4. MINIMALES Feldset für Webflow
+  // ----------------------------------------------------
+  // 4) Minimales Mapping zurückgeben
+  // ----------------------------------------------------
   return {
-    name,            // Pflichtfeld in Webflow
-    slug,            // sehr nützlich
-    "geraet-id": String(id || ""), // damit wir das Fahrzeug wiederfinden können
+    name,
+    slug,
+    "fahrzeug-id": vehicleId // ← WICHTIG: das ist DIE echte ID!
   };
 }
-
