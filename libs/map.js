@@ -1,101 +1,51 @@
-/**
- * Mapping Syscara → Webflow CMS fields
- */
+export function mapVehicle(vehicle) {
+  if (!vehicle) return null;
 
-export function mapVehicle(sys) {
-  try {
-    const id = sys.id;
-    const model = sys.model || {};
-    const engine = sys.engine || {};
-    const dims = sys.dimensions || {};
-    const prices = sys.prices || {};
-    const media = sys.media || [];
+  // Hauptbild + Galerie IDs extrahieren
+  const imageIds = Array.isArray(vehicle.media)
+    ? vehicle.media.filter(m => m.group === "image").map(m => m.id)
+    : [];
 
-    // Name: Hersteller + Serie + Modell
-    const name = `${model.producer || ""} ${model.series || ""} ${model.model || ""}`.trim();
+  const hauptbild = imageIds.length > 0 ? String(imageIds[0]) : "";
 
-    // Slug: sauber + fallback auf ID
-    const slug = `${model.producer || "fahrzeug"}-${model.model || ""}-${id}`
-      .toLowerCase()
-      .replace(/[^a-z0-9-]+/g, "-")
-      .replace(/--+/g, "-")
-      .replace(/^-|-$/g, "");
+  // Maximal 25 Bilder für Galerie
+  const galerie = imageIds.slice(0, 25).map(id => String(id));
 
-    // Fahrzeugart (Caravan oder Reisemobil)
-    const fahrzeugart =
-      sys.type === "Caravan" ? "Caravan" :
-      sys.type === "Reisemobil" ? "Reisemobil" :
-      sys.type || "";
+  return {
+    name: `${vehicle.model?.producer || ""} ${vehicle.model?.model || ""}`.trim(),
+    slug: `${vehicle.id}-${(vehicle.model?.model || "").toLowerCase().replace(/\s+/g, "-")}`,
 
-    // Zustand
-    const zustand = {
-      NEW: "Neu",
-      USED: "Gebraucht",
-      BE: "Gebraucht",
-    }[sys.condition] || sys.condition || "";
+    hersteller: String(vehicle.model?.producer || ""),
+    serie: String(vehicle.model?.series || ""),
+    modell: String(vehicle.model?.model || ""),
+    modell_zusatz: String(vehicle.model?.model_add || ""),
 
-    // Typ (z. B. Teilintegriert)
-    const fahrzeugtyp = sys.typeof || "";
+    zustand: String(vehicle.condition || ""),
+    fahrzeugart: String(vehicle.type || ""),
+    fahrzeugtyp: String(vehicle.typeof || ""),
 
-    // Bilder vorbereiten
-    const imageIds = media
-      .filter((m) => m.group === "image" && m.type === "upload")
-      .map((m) => m.id);
+    ps: String(vehicle.engine?.ps || ""),
+    kw: String(vehicle.engine?.kw || ""),
+    kraftstoff: String(vehicle.engine?.fuel || ""),
+    getriebe: String(vehicle.engine?.gear || ""),
 
-    const hauptbild = imageIds.length > 0 ? imageIds[0] : "";
+    beschreibung: String(vehicle.texts?.description_plain || ""),
+    beschreibung_kurz: String(vehicle.texts?.internal || ""),
 
-    const galerie = imageIds.slice(0, 25);
+    kilometer: String(vehicle.mileage || ""),
+    baujahr: String(vehicle.model?.modelyear || ""),
 
-    // Kilometerstand
-    const km = sys.mileage || "";
+    preis: String(vehicle.prices?.offer || ""),
+    breite: String(vehicle.dimensions?.width || ""),
+    hoehe: String(vehicle.dimensions?.height || ""),
+    laenge: String(vehicle.dimensions?.length || ""),
 
-    // Baujahr
-    const baujahr = model.modelyear || "";
+    geraet_id: String(vehicle.id || ""),
 
-    // Preis (Brutto)
-    const preis = prices.offer || prices.basic || "";
+    hauptbild: hauptbild,
+    galerie: galerie,
 
-    // Maße
-    const breite = dims.width || "";
-    const hoehe = dims.height || "";
-    const laenge = dims.length || "";
-
-    // Beschreibung
-    const beschreibung = sys.texts?.description || "";
-    const beschreibung_kurz = sys.texts?.description_plain || "";
-
-    return {
-      originalId: id, // wichtig für Delta-Sync
-      mapped: {
-        name,
-        slug,
-        hersteller: model.producer || "",
-        serie: model.series || "",
-        modell: model.model || "",
-        modell_zusatz: model.model_add || "",
-        zustand,
-        fahrzeugart,
-        fahrzeugtyp,
-        ps: engine.ps || "",
-        kw: engine.kw || "",
-        kraftstoff: engine.fuel || "",
-        getriebe: engine.gear || "",
-        beschreibung,
-        beschreibung_kurz,
-        kilometer: km,
-        baujahr,
-        preis,
-        breite,
-        hoehe,
-        laenge,
-        geraet_id: String(id),
-        hauptbild,
-        galerie
-      }
-    };
-
-  } catch (err) {
-    console.error("Mapping Error:", err);
-    return null;
-  }
+    // dein neues Feld "verkauf_miete"
+    verkauf_miete: String(vehicle.status || ""),
+  };
 }
