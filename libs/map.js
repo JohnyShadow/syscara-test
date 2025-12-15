@@ -1,81 +1,73 @@
-// libs/map.js
+// /libs/map.js
 
-// Hilfsfunktion: Werte normalisieren (Webflow will Strings)
-function normalizeValue(value) {
-  if (value === null || value === undefined) return "";
-  if (typeof value === "number") return String(value);
-  return value;
-}
+export function mapVehicle(ad) {
+  if (!ad || typeof ad !== "object") return null;
 
-export function mapVehicle(syscara) {
+  // Safeguard helpers
+  const safe = (value, fallback = "") =>
+    value === undefined || value === null ? fallback : value;
 
-  // Name korrekt zusammensetzen
-  const name =
-    `${syscara.model?.producer ?? ""} ${syscara.model?.series ?? ""} ${syscara.model?.model ?? ""}`
-      .replace(/\s+/g, " ")
-      .trim();
+  const model = ad.model || {};
+  const engine = ad.engine || {};
+  const dimensions = ad.dimensions || {};
+  const media = Array.isArray(ad.media) ? ad.media : [];
+  const texts = ad.texts || {};
+  const location = ad.location || {};
+  const prices = ad.prices || {};
 
-  // Slug generieren
-  const slug = `${syscara.id}-${(syscara.model?.producer ?? "fahrzeug")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")}`;
-
-  // Galerie-ID-Liste max 25
-  const gallery = (syscara.media ?? [])
-    .filter(m => m.group === "image")
-    .map(m => m.id)
-    .slice(0, 25);
-
-  // **********************
-  //  MAPPED OUTPUT
-  //  (ALLE Keys bereits Bindestriche!)
-  // **********************
-
-  const mapped = {
-    name,
-    slug,
-
-    hersteller: syscara.model?.producer ?? "",
-    serie: syscara.model?.series ?? "",
-    modell: syscara.model?.model ?? "",
-    "modell-zusatz": syscara.model?.model_add ?? "",
-
-    zustand: syscara.condition ?? "",
-    fahrzeugart: syscara.type ?? "",
-    fahrzeugtyp: syscara.typeof ?? "",
-
-    ps: syscara.engine?.ps ?? "",
-    kw: syscara.engine?.kw ?? "",
-    kraftstoff: syscara.engine?.fuel ?? "",
-    getriebe: syscara.engine?.gear ?? "",
-
-    beschreibung: syscara.texts?.description ?? "",
-    "beschreibung-kurz": syscara.texts?.description_plain ?? "",
-
-    kilometer: syscara.mileage ?? "",
-    baujahr: syscara.model?.modelyear ?? "",
-
-    preis: syscara.prices?.offer ?? "",
-    breite: syscara.dimensions?.width ?? "",
-    hoehe: syscara.dimensions?.height ?? "",
-    laenge: syscara.dimensions?.length ?? "",
-
-    "geraet-id": syscara.id ?? "",
-    "verkauf-miete": syscara.flags?.includes("RENTAL_CAR") ? "miete" : "kauf",
-
-    hauptbild: (gallery.length > 0 ? gallery[0] : ""),
-    galerie: gallery
-  };
-
-  // ALLE Werte als Strings finalisieren
-  const cleaned = {};
-  for (const key in mapped) {
-    cleaned[key] = normalizeValue(mapped[key]);
+  // Verkauf oder Miete bestimmen
+  let verkauf_miete = "kauf";
+  if ((location.name || "").toLowerCase().includes("miet")) {
+    verkauf_miete = "miete";
   }
 
+  // Galerie IDs
+  const galleryImages = media
+    .map((m) => m.id)
+    .filter((id) => typeof id === "number" || typeof id === "string")
+    .slice(0, 25);
+
   return {
-    originalId: syscara.id,
-    mapped: cleaned
+    originalId: ad.id,
+
+    // -------- Webflow Name + Slug --------
+    name: safe(model.model, ""),
+    slug: `${ad.id}-fahrzeug`,
+
+    // -------- Fahrzeugdaten --------
+    hersteller: safe(model.producer),
+    serie: safe(model.series),
+    modell: safe(model.model),
+    "modell-zusatz": safe(model.model_add),
+
+    zustand: safe(ad.condition),
+    fahrzeugart: safe(ad.type),
+    fahrzeugtyp: safe(ad.typeof),
+
+    ps: safe(engine.ps, ""),
+    kw: safe(engine.kw, ""),
+    kraftstoff: safe(engine.fuel, ""),
+    getriebe: safe(engine.gear, ""),
+
+    beschreibung: safe(texts.description),
+    "beschreibung-kurz": safe(texts.description_plain),
+
+    kilometer: safe(ad.mileage, ""),
+    baujahr: safe(model.modelyear, ""),
+    preis: safe(prices.offer, ""),
+
+    breite: safe(dimensions.width, ""),
+    hoehe: safe(dimensions.height, ""),
+    laenge: safe(dimensions.length, ""),
+
+    "geraet-id": String(ad.id),
+
+    // -------- Bilder --------
+    hauptbild: media.length > 0 ? media[0].id : "",
+    galerie: galleryImages,
+
+    // -------- Zusatz --------
+    "verkauf-miete": verkauf_miete
   };
 }
 
