@@ -1,73 +1,92 @@
-// /libs/map.js
+// pages/api/sync.js
+import { mapVehicle } from "../../libs/map.js";
 
-export function mapVehicle(ad) {
-  if (!ad || typeof ad !== "object") return null;
+export default async function handler(req, res) {
+  try {
+    const {
+      WEBFLOW_TOKEN,
+      WEBFLOW_COLLECTION,
+      SYS_API_USER,
+      SYS_API_PASS,
+    } = process.env;
 
-  // Safeguard helpers
-  const safe = (value, fallback = "") =>
-    value === undefined || value === null ? fallback : value;
+    if (!WEBFLOW_TOKEN || !WEBFLOW_COLLECTION || !SYS_API_USER || !SYS_API_PASS) {
+      return res.status(500).json({
+        error: "Fehlende ENV Variablen (WEBFLOW_TOKEN, WEBFLOW_COLLECTION, SYS_API_USER, SYS_API_PASS)",
+      });
+    }
 
-  const model = ad.model || {};
-  const engine = ad.engine || {};
-  const dimensions = ad.dimensions || {};
-  const media = Array.isArray(ad.media) ? ad.media : [];
-  const texts = ad.texts || {};
-  const location = ad.location || {};
-  const prices = ad.prices || {};
+    // 🔹 1. EIN Fahrzeug aus Syscara holen (135965)
+    const sysId = 135965;
+    const sysUrl = `https://api.syscara.com/sale/ads/${sysId}`;
 
-  // Verkauf oder Miete bestimmen
-  let verkauf_miete = "kauf";
-  if ((location.name || "").toLowerCase().includes("miet")) {
-    verkauf_miete = "miete";
+    const sysResponse = await fetch(sysUrl, {
+      headers: {
+        Authorization:
+          "Basic " + Buffer.from(`${SYS_API_USER}:${SYS_API_PASS}`).toString("base64"),
+        "Content-Type": "application/json",
+      },
+    });
+
+    if (!sysResponse.ok) {
+      const text = await sysResponse.text();
+      console.error("Syscara error:", text);
+      return res.status(500).json({
+        error: "Syscara Request fehlgeschlagen",
+        details: text,
+      });
+    }
+
+    const ad = await sysResponse.json();
+
+    // 🔹 2. Map zu Webflow-Feldern
+    const mapped = mapVehicle(ad);
+
+    console.log("✅ Mapped Vehicle:", mapped);
+
+    // 🔹 3. Minimaler Body für Webflow API v2
+    const body = {
+      items: [
+        {
+          fieldData: mapped,
+        },
+      ],
+    };
+
+    console.log("➡️ Body an Webflow:", JSON.stringify(body, null, 2));
+
+    // 🔹 4. Request an Webflow
+    const wfUrl = `https://api.webflow.com/v2/collections/${WEBFLOW_COLLECTION}/items`;
+
+    const wfResponse = await fetch(wfUrl, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${WEBFLOW_TOKEN}`,
+        "Content-Type": "application/json",
+        accept: "application/json",
+      },
+      body: JSON.stringify(body),
+    });
+
+    const wfJson = await wfResponse.json();
+
+    if (!wfResponse.ok) {
+      console.error("Webflow Error:", wfJson);
+      return res.status(500).json({
+        error: "Webflow API error",
+        details: wfJson,
+      });
+    }
+
+    // 🔹 5. Erfolg zurückgeben
+    return res.status(200).json({
+      ok: true,
+      syscaraId: sysId,
+      mapped,
+      webflowResponse: wfJson,
+    });
+  } catch (err) {
+    console.error("Unhandled Error:", err);
+    return res.status(500).json({ error: err.message });
   }
-
-  // Galerie IDs
-  const galleryImages = media
-    .map((m) => m.id)
-    .filter((id) => typeof id === "number" || typeof id === "string")
-    .slice(0, 25);
-
-  return {
-    originalId: ad.id,
-
-    // -------- Webflow Name + Slug --------
-    name: safe(model.model, ""),
-    slug: `${ad.id}-fahrzeug`,
-
-    // -------- Fahrzeugdaten --------
-    hersteller: safe(model.producer),
-    serie: safe(model.series),
-    modell: safe(model.model),
-    "modell-zusatz": safe(model.model_add),
-
-    zustand: safe(ad.condition),
-    fahrzeugart: safe(ad.type),
-    fahrzeugtyp: safe(ad.typeof),
-
-    ps: safe(engine.ps, ""),
-    kw: safe(engine.kw, ""),
-    kraftstoff: safe(engine.fuel, ""),
-    getriebe: safe(engine.gear, ""),
-
-    beschreibung: safe(texts.description),
-    "beschreibung-kurz": safe(texts.description_plain),
-
-    kilometer: safe(ad.mileage, ""),
-    baujahr: safe(model.modelyear, ""),
-    preis: safe(prices.offer, ""),
-
-    breite: safe(dimensions.width, ""),
-    hoehe: safe(dimensions.height, ""),
-    laenge: safe(dimensions.length, ""),
-
-    "geraet-id": String(ad.id),
-
-    // -------- Bilder --------
-    hauptbild: media.length > 0 ? media[0].id : "",
-    galerie: galleryImages,
-
-    // -------- Zusatz --------
-    "verkauf-miete": verkauf_miete
-  };
 }
-
