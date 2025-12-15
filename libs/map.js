@@ -11,8 +11,8 @@ function slugify(str) {
 
 export function mapVehicle(ad) {
   // ----------------------------------------------------
-  // 1) Echte Fahrzeugdaten extrahieren
-  // Syscara liefert manchmal: { "135965": { ... } }
+  // 1) Syscara liefert manchmal: { "135965": { ... }}
+  // → das echte Objekt herausziehen
   // ----------------------------------------------------
   let vehicleId = null;
 
@@ -29,16 +29,15 @@ export function mapVehicle(ad) {
   vehicleId = vehicleId ? String(vehicleId) : "";
 
   // ----------------------------------------------------
-  // 2) Daten aus Modelldaten holen
+  // 2) Fahrzeugdaten holen
   // ----------------------------------------------------
   const producer = ad.model?.producer || "";
   const series = ad.model?.series || "";
   const model = ad.model?.model || "";
-  const model_add = ad.model?.model_add || ""; // kommt NICHT in den Namen
+  const model_add = ad.model?.model_add || ""; // separat → nicht im Titel
 
   // ----------------------------------------------------
-  // 3) Name bauen: Hersteller + Serie + Modell + (ID)
-  // garantiert eindeutig, duplicate-safe
+  // 3) Name = Hersteller + Serie + Modell + (ID)
   // ----------------------------------------------------
   const baseName = [producer, series, model].filter(Boolean).join(" ");
   const finalName = vehicleId
@@ -46,14 +45,16 @@ export function mapVehicle(ad) {
     : baseName || "Fahrzeug ohne ID";
 
   // ----------------------------------------------------
-  // 4) Slug aus dem finalen Namen bauen
+  // 4) Slug (ID nur einmal!)
+  // Beispiel: 135965-dethleffs-just-90-t-6752-dbl
   // ----------------------------------------------------
-  const slugBase = slugify(finalName);
-  const slug = vehicleId ? `${vehicleId}-${slugBase}` : slugBase;
+  const slugName = slugify(baseName);         // OHNE (ID)
+  const slug = vehicleId
+    ? `${vehicleId}-${slugName}`
+    : slugName;
 
   // ----------------------------------------------------
-  // 5) Minimales Mapping + Extra-Feld für model_add
-  // Webflow benötigt nur name + slug für Pflichtfelder
+  // 5) Minimales Webflow-Mapping
   // ----------------------------------------------------
   return {
     name: finalName,
@@ -62,4 +63,3 @@ export function mapVehicle(ad) {
     "modell-zusatz": model_add || ""
   };
 }
-
