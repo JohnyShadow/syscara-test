@@ -1,54 +1,56 @@
 // pages/api/media.js
-
 export default async function handler(req, res) {
   try {
     const { id } = req.query;
 
     if (!id) {
-      return res.status(400).json({ error: "Missing media id" });
+      return res.status(400).json({ error: "Missing ?id=" });
     }
 
-    // Original-Syscara Bild-URL
-    const url = `https://api.syscara.com/media/${id}`;
+    const user = process.env.SYS_API_USER;
+    const pass = process.env.SYS_API_PASS;
 
-    // Datei abrufen
-    const sysRes = await fetch(url);
+    const url = `https://api.syscara.com/data/media/?media_id=${id}&file=path`;
 
-    if (!sysRes.ok) {
-      const text = await sysRes.text();
-      console.error("Syscara media error:", text);
+    const response = await fetch(url, {
+      headers: {
+        Authorization:
+          "Basic " + Buffer.from(`${user}:${pass}`).toString("base64"),
+        "Content-Type": "application/json",
+      },
+    });
 
-      return res.status(sysRes.status).json({
-        error: "Failed to fetch media from Syscara",
-        details: text,
+    const data = await response.json();
+
+    if (!response.ok) {
+      return res.status(500).json({
+        error: "Syscara error",
+        details: data,
       });
     }
 
-    // Content-Type übernehmen
-    const contentType = sysRes.headers.get("content-type");
+    const item = data[id];
 
-    // Wenn kein Bild → abbrechen
-    if (!contentType || !contentType.startsWith("image/")) {
-      const text = await sysRes.text();
-      console.error("❌ Kein Bildformat:", contentType, text);
-
-      return res.status(400).json({
-        error: "Not an image",
-        contentType,
-        body: text,
+    if (!item || !item.name) {
+      return res.status(500).json({
+        error: "Media not found in Syscara response",
+        details: data,
       });
     }
 
-    // Header für Webflow setzen
-    res.setHeader("Content-Type", contentType);
+    const publicUrl = `https://api.syscara.com/data/media/${item.name}`;
 
-    // Stream an Webflow weiterleiten
-    const arrayBuffer = await sysRes.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
-
-    res.send(buffer);
-  } catch (err) {
-    console.error("Unhandled error:", err);
-    res.status(500).json({ error: err.message });
+    return res.status(200).json({
+      ok: true,
+      id,
+      fileName: item.name,
+      publicUrl,
+    });
+  } catch (e) {
+    return res.status(500).json({
+      error: "Internal error",
+      details: e.message,
+    });
   }
 }
+
