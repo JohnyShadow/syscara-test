@@ -46,27 +46,35 @@ export default async function handler(req, res) {
 
     const ad = await sysResponse.json();
 
-    // 🧩 2. Map Fahrzeugdaten → Webflow
+    // 🧩 2. Map Fahrzeugdaten → Webflow Felder
     const mapped = mapVehicle(ad);
-
     console.log("✅ Mapped Vehicle:", mapped);
 
-    // 🖼️ 3. HAUPTBILD PROXY vorbereiten
-    let mediaCache = mapped["media-cache"]
-      ? JSON.parse(mapped["media-cache"])
-      : null;
+    // 🔍 3. media-cache auswerten → Hauptbild-ID nehmen
+    let mediaCache = null;
+    if (mapped["media-cache"]) {
+      try {
+        mediaCache = JSON.parse(mapped["media-cache"]);
+      } catch (e) {
+        console.warn("Konnte media-cache nicht parsen:", e);
+      }
+    }
 
-    let hauptbildId = mediaCache?.hauptbild || null;
+    const hauptbildId = mediaCache?.hauptbild || null;
 
-    // Proxy-URL für Webflow (damit Bild downloadbar ist)
-    const origin = req.headers.origin || `https://${req.headers.host}`;
+    // 🌐 4. Öffentliche Proxy-URL für das Hauptbild bauen
+    //    → Webflow ruft später diese URL auf und bekommt das Bild
+    const proto = req.headers["x-forwarded-proto"] || "https";
+    const host = req.headers.host;
+    const origin = `${proto}://${host}`;
+
     const hauptbildUrl = hauptbildId
-      ? `${origin}/api/media?id=${hauptbildId}`
+      ? `${origin}/api/media?id=${encodeURIComponent(hauptbildId)}`
       : null;
 
     console.log("➡️ Proxy URL Hauptbild:", hauptbildUrl);
 
-    // 📝 4. Body für Webflow → mapped + Hauptbild
+    // 📝 5. Body für Webflow: alle Felder + optional hauptbild
     const fieldData = {
       ...mapped,
       ...(hauptbildUrl ? { hauptbild: hauptbildUrl } : {}),
@@ -82,7 +90,7 @@ export default async function handler(req, res) {
 
     console.log("➡️ Body an Webflow:", JSON.stringify(body, null, 2));
 
-    // 🌐 5. Webflow Request
+    // 🚀 6. Request an Webflow (CMS API v2)
     const wfUrl = `https://api.webflow.com/v2/collections/${WEBFLOW_COLLECTION}/items`;
 
     const wfResponse = await fetch(wfUrl, {
@@ -105,7 +113,7 @@ export default async function handler(req, res) {
       });
     }
 
-    // 🎉 6. Erfolg
+    // 🎉 7. Erfolg
     return res.status(200).json({
       ok: true,
       syscaraId: sysId,
