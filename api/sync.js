@@ -1,4 +1,4 @@
-import { runDeltaSync } from "../../libs/sync.js";
+import { runDeltaSync } from "../libs/sync.js";
 
 export default async function handler(req, res) {
   try {
