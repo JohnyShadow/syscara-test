@@ -9,89 +9,60 @@ function slugify(str) {
     .replace(/(^-|-$)+/g, "");
 }
 
-// --------------------------------------------------
-// 🔑 WICHTIG: Syscara-Antwort normalisieren
-// --------------------------------------------------
-function normalizeSyscaraAd(input) {
-  if (!input || typeof input !== "object") return {};
+export function mapVehicle(input) {
+  // ----------------------------------------------------
+  // 1) Syscara-Response NORMALISIEREN (WICHTIG!)
+  // ----------------------------------------------------
+  let ad = input;
 
-  // Variante C: { RESULT, DATA: { "135965": {...} } }
-  if (input.DATA && typeof input.DATA === "object") {
-    const keys = Object.keys(input.DATA);
+  // Variante: { "135965": { ... } }
+  if (!ad.id && typeof ad === "object") {
+    const keys = Object.keys(ad);
+    if (keys.length === 1 && typeof ad[keys[0]] === "object") {
+      ad = ad[keys[0]];
+    }
+  }
+
+  // Variante: { DATA: { "135965": { ... } } }
+  if (!ad.id && ad.DATA) {
+    const keys = Object.keys(ad.DATA);
     if (keys.length === 1) {
-      return input.DATA[keys[0]];
+      ad = ad.DATA[keys[0]];
     }
   }
 
-  // Variante B: { "135965": {...} }
-  if (!input.id) {
-    const keys = Object.keys(input);
-    if (keys.length === 1 && typeof input[keys[0]] === "object") {
-      return input[keys[0]];
-    }
-  }
-
-  // Variante A: direktes Fahrzeug
-  return input;
-}
-
-// --------------------------------------------------
-export function mapVehicle(rawAd) {
-  // 🔹 1) NORMALISIEREN (DAS WAR DER FEHLER)
-  const ad = normalizeSyscaraAd(rawAd);
-
+  // ----------------------------------------------------
+  // 2) Fahrzeug-ID (JETZT zuverlässig)
+  // ----------------------------------------------------
   const vehicleId = ad?.id ? String(ad.id) : "";
 
-  // ------------------------------------------------
-  // 2) Name & Slug
-  // ------------------------------------------------
+  // ----------------------------------------------------
+  // 3) Name & Slug
+  // ----------------------------------------------------
   const producer = ad.model?.producer || "";
   const series = ad.model?.series || "";
   const model = ad.model?.model || "";
 
-  const baseName =
+  const name =
     [producer, series, model].filter(Boolean).join(" ") ||
     `Fahrzeug ${vehicleId || "unbekannt"}`;
 
   const slug = vehicleId
-    ? `${vehicleId}-${slugify(baseName)}`
-    : slugify(baseName);
+    ? `${vehicleId}-${slugify(name)}`
+    : slugify(name);
 
-  // ------------------------------------------------
-  // 3) Verkaufsart
-  // ------------------------------------------------
-  const verkaufMiete = ad.category === "Rent" ? "miete" : "verkauf";
-
-  // ------------------------------------------------
-  // 4) Zusatzdaten
-  // ------------------------------------------------
-  const gesamtmasse =
-    ad.weights?.total != null ? String(ad.weights.total) : "";
-
-  const erstzulassung = ad.date?.registration || "";
-
-  const schlafplatz =
-    ad.beds?.num != null ? String(ad.beds.num) : "";
-
-  const bett = Array.isArray(ad.beds?.beds)
-    ? ad.beds.beds.map((b) => b.type).join(", ")
-    : "";
-
-  const sitzgruppe = Array.isArray(ad.seating?.seatings)
-    ? ad.seating.seatings.map((s) => s.type).join(", ")
-    : "";
-
-  // ------------------------------------------------
-  // 5) Media-IDs (Cache)
-  // ------------------------------------------------
+  // ----------------------------------------------------
+  // 4) Media-Cache (IDs ONLY)
+  // ----------------------------------------------------
   const media = Array.isArray(ad.media) ? ad.media : [];
 
   const images = media.filter(
     (m) => m && m.group === "image" && m.id
   );
 
-  const grundriss =
-    media.find((m) => m && m.group === "layout")?.id || null;
+  const grundriss = media.find(
+    (m) => m && m.group === "layout"
+  )?.id || null;
 
   const mediaCache = JSON.stringify({
     hauptbild: images[0]?.id || null,
@@ -99,21 +70,13 @@ export function mapVehicle(rawAd) {
     grundriss,
   });
 
-  // ------------------------------------------------
-  // 6) Rückgabe
-  // ------------------------------------------------
+  // ----------------------------------------------------
+  // 5) Rückgabe (nichts entfernt!)
+  // ----------------------------------------------------
   return {
-    name: baseName,
+    name,
     slug,
     "fahrzeug-id": vehicleId,
-
-    "verkauf-miete": verkaufMiete,
-    gesamtmasse,
-    erstzulassung,
-    schlafplatz,
-    bett,
-    sitzgruppe,
-
     "media-cache": mediaCache,
   };
 }
