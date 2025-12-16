@@ -13,6 +13,7 @@ async function webflowRequest(url, token) {
       accept: "application/json",
     },
   });
+
   const json = await res.json();
   if (!res.ok) throw json;
   return json;
@@ -35,6 +36,15 @@ async function getFeatureMap(token, collectionId) {
 
   featureMapCache = map;
   return map;
+}
+
+// ----------------------------------------------------
+// Helper: Origin sauber bauen (Vercel / Proxies)
+// ----------------------------------------------------
+function getOrigin(req) {
+  const proto = req.headers["x-forwarded-proto"] || "https";
+  const host = req.headers["x-forwarded-host"] || req.headers.host;
+  return `${proto}://${host}`;
 }
 
 // ----------------------------------------------------
@@ -69,38 +79,57 @@ export default async function handler(req, res) {
         Authorization:
           "Basic " +
           Buffer.from(`${SYS_API_USER}:${SYS_API_PASS}`).toString("base64"),
+        "Content-Type": "application/json",
+        accept: "application/json",
       },
     });
 
+    // ✅ WICHTIG: Wenn Syscara nicht OK liefert, sofort abbrechen
+    if (!sysRes.ok) {
+      const text = await sysRes.text();
+      console.error("Syscara error:", sysRes.status, text);
+      return res.status(500).json({
+        error: "Syscara Request failed",
+        status: sysRes.status,
+        details: text,
+      });
+    }
+
     const ad = await sysRes.json();
 
-    // 🔹 Mapping (unverändert)
+    // 🔹 Mapping
     const mapped = mapVehicle(ad);
 
     // ------------------------------------------------
-    // 🖼️ BILDER AUS media-cache ERGÄNZEN
+    // 🖼️ BILDER AUS media-cache ERGÄNZEN (hauptbild/galerie/grundriss)
     // ------------------------------------------------
-    if (mapped["media-cache"]) {
-      const mediaCache = JSON.parse(mapped["media-cache"]);
-      const origin = `https://${req.headers.host}`;
+    const origin = getOrigin(req);
 
-      if (mediaCache.hauptbild) {
+    if (mapped["media-cache"]) {
+      let mediaCache = null;
+      try {
+        mediaCache = JSON.parse(mapped["media-cache"]);
+      } catch (e) {
+        console.error("media-cache JSON parse failed:", mapped["media-cache"]);
+      }
+
+      if (mediaCache?.hauptbild) {
         mapped.hauptbild = `${origin}/api/media?id=${mediaCache.hauptbild}`;
       }
 
-      if (Array.isArray(mediaCache.galerie)) {
+      if (Array.isArray(mediaCache?.galerie) && mediaCache.galerie.length) {
         mapped.galerie = mediaCache.galerie
           .slice(0, 25)
           .map((id) => `${origin}/api/media?id=${id}`);
       }
 
-      if (mediaCache.grundriss) {
+      if (mediaCache?.grundriss) {
         mapped.grundriss = `${origin}/api/media?id=${mediaCache.grundriss}`;
       }
     }
 
     // ------------------------------------------------
-    // 🔹 Feature-Matching (unverändert)
+    // 🔹 Feature-Matching (Slug -> Item-ID)
     // ------------------------------------------------
     const featureMap = await getFeatureMap(
       WEBFLOW_TOKEN,
@@ -118,11 +147,7 @@ export default async function handler(req, res) {
     // 🔹 Webflow Create
     // ------------------------------------------------
     const body = {
-      items: [
-        {
-          fieldData: mapped,
-        },
-      ],
+      items: [{ fieldData: mapped }],
     };
 
     const wfRes = await fetch(
@@ -139,10 +164,14 @@ export default async function handler(req, res) {
     );
 
     const wfJson = await wfRes.json();
-    if (!wfRes.ok) throw wfJson;
+    if (!wfRes.ok) {
+      console.error("Webflow Error:", wfJson);
+      return res.status(500).json({ error: "Webflow API error", details: wfJson });
+    }
 
     return res.status(200).json({
       ok: true,
+      syscaraId: sysId,
       vehicle: mapped.name,
       featuresLinked: featureIds.length,
       images: {
@@ -150,10 +179,15 @@ export default async function handler(req, res) {
         galerie: mapped.galerie?.length || 0,
         grundriss: !!mapped.grundriss,
       },
+      debug: {
+        origin,
+        hasMediaCache: !!mapped["media-cache"],
+      },
       webflowItem: wfJson,
     });
   } catch (err) {
     console.error(err);
-    return res.status(500).json({ error: err });
+    return res.status(500).json({ error: err?.message || err });
   }
 }
+
