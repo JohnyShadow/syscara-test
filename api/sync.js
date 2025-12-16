@@ -23,7 +23,7 @@ export default async function handler(req, res) {
     }
 
     // --------------------------------------------------
-    // 1) EIN Fahrzeug zum Test laden
+    // 1) Testfahrzeug laden
     // --------------------------------------------------
     const sysId = 135965;
     const sysUrl = `https://api.syscara.com/sale/ads/${sysId}`;
@@ -54,7 +54,7 @@ export default async function handler(req, res) {
     console.log("✅ Mapped Vehicle:", mapped);
 
     // --------------------------------------------------
-    // 3) Media-Cache auswerten
+    // 3) Media-Cache auslesen
     // --------------------------------------------------
     let mediaCache = null;
 
@@ -68,18 +68,28 @@ export default async function handler(req, res) {
 
     const origin = req.headers.origin || `https://${req.headers.host}`;
 
+    // Hauptbild
     const hauptbildUrl =
       mediaCache?.hauptbild != null
         ? `${origin}/api/media?id=${mediaCache.hauptbild}`
         : null;
 
+    // Grundriss
     const grundrissUrl =
       mediaCache?.grundriss != null
         ? `${origin}/api/media?id=${mediaCache.grundriss}`
         : null;
 
+    // Galerie (max. 25 Bilder)
+    const galerieUrls = Array.isArray(mediaCache?.galerie)
+      ? mediaCache.galerie
+          .slice(0, 25)
+          .map((id) => `${origin}/api/media?id=${id}`)
+      : [];
+
     console.log("🖼️ Hauptbild:", hauptbildUrl);
     console.log("📐 Grundriss:", grundrissUrl);
+    console.log("🖼️ Galerie:", galerieUrls.length);
 
     // --------------------------------------------------
     // 4) FieldData bauen
@@ -88,6 +98,7 @@ export default async function handler(req, res) {
       ...mapped,
       ...(hauptbildUrl ? { hauptbild: hauptbildUrl } : {}),
       ...(grundrissUrl ? { grundriss: grundrissUrl } : {}),
+      ...(galerieUrls.length > 0 ? { galerie: galerieUrls } : {}),
     };
 
     const body = {
@@ -99,7 +110,7 @@ export default async function handler(req, res) {
     };
 
     // --------------------------------------------------
-    // 5) Webflow API Call
+    // 5) Webflow Request
     // --------------------------------------------------
     const wfUrl = `https://api.webflow.com/v2/collections/${WEBFLOW_COLLECTION}/items`;
 
@@ -129,9 +140,11 @@ export default async function handler(req, res) {
     return res.status(200).json({
       ok: true,
       syscaraId: sysId,
-      hauptbildUrl,
-      grundrissUrl,
-      mapped,
+      images: {
+        hauptbild: hauptbildUrl,
+        grundriss: grundrissUrl,
+        galerieCount: galerieUrls.length,
+      },
       webflowResponse: wfJson,
     });
   } catch (err) {
