@@ -9,9 +9,13 @@ function slugify(str) {
     .replace(/(^-|-$)+/g, "");
 }
 
+function hasFeature(features, key) {
+  return features.includes(key) ? "true" : "";
+}
+
 export function mapVehicle(ad) {
   // ----------------------------------------------------
-  // 1) Sonderfall: { "135965": { ... } }
+  // 1) Objekt normalisieren
   // ----------------------------------------------------
   let vehicleId = null;
 
@@ -28,7 +32,7 @@ export function mapVehicle(ad) {
   vehicleId = vehicleId ? String(vehicleId) : "";
 
   // ----------------------------------------------------
-  // 2) Name & Slug (OHNE modell-zusatz)
+  // 2) Name & Slug
   // ----------------------------------------------------
   const producer = ad.model?.producer || "";
   const series = ad.model?.series || "";
@@ -39,8 +43,9 @@ export function mapVehicle(ad) {
   const baseName =
     baseNameParts.join(" ").trim() || `Fahrzeug ${vehicleId || "unbekannt"}`;
 
-  const slugBase = slugify(baseName);
-  const slug = vehicleId ? `${vehicleId}-${slugBase}` : slugBase;
+  const slug = vehicleId
+    ? `${vehicleId}-${slugify(baseName)}`
+    : slugify(baseName);
 
   // ----------------------------------------------------
   // 3) Basisdaten
@@ -49,49 +54,70 @@ export function mapVehicle(ad) {
   const fahrzeugtyp = ad.typeof || "";
   const zustand = ad.condition || "";
 
-  const baujahr = ad.model?.modelyear
-    ? String(ad.model.modelyear)
-    : "";
-
+  const baujahr = ad.model?.modelyear ? String(ad.model.modelyear) : "";
   const kilometer =
     ad.mileage != null && ad.mileage !== 0 ? String(ad.mileage) : "";
+  const preis = ad.prices?.offer != null ? String(ad.prices.offer) : "";
 
-  const preis =
-    ad.prices?.offer != null ? String(ad.prices.offer) : "";
-
-  const breite =
-    ad.dimensions?.width != null ? String(ad.dimensions.width) : "";
-
-  const hoehe =
-    ad.dimensions?.height != null ? String(ad.dimensions.height) : "";
-
-  const laenge =
-    ad.dimensions?.length != null ? String(ad.dimensions.length) : "";
+  const breite = ad.dimensions?.width != null ? String(ad.dimensions.width) : "";
+  const hoehe = ad.dimensions?.height != null ? String(ad.dimensions.height) : "";
+  const laenge = ad.dimensions?.length != null ? String(ad.dimensions.length) : "";
 
   // ----------------------------------------------------
-  // 4) NEU: Technik & Texte
+  // 4) Technik & Texte
   // ----------------------------------------------------
-  const ps =
-    ad.engine?.ps != null ? String(ad.engine.ps) : "";
-
-  const kw =
-    ad.engine?.kw != null ? String(ad.engine.kw) : "";
-
+  const ps = ad.engine?.ps != null ? String(ad.engine.ps) : "";
+  const kw = ad.engine?.kw != null ? String(ad.engine.kw) : "";
   const kraftstoff = ad.engine?.fuel || "";
   const getriebe = ad.engine?.gear || "";
 
   const beschreibung = ad.texts?.description || "";
-  const beschreibung_kurz = ad.texts?.description_plain || "";
 
   const geraetId = ad.identifier?.internal
     ? String(ad.identifier.internal)
     : "";
 
-  // Verkauf / Miete – Logik kommt später
   const verkaufMiete = "";
 
   // ----------------------------------------------------
-  // 5) MEDIA-CACHE (Version A – nur IDs)
+  // 5) Zusatzdaten
+  // ----------------------------------------------------
+  const gesamtmasse =
+    ad.weights?.total != null ? String(ad.weights.total) : "";
+
+  const erstzulassung = ad.date?.registration || "";
+
+  const schlafplatz =
+    ad.beds?.num != null ? String(ad.beds.num) : "";
+
+  const bett = Array.isArray(ad.beds?.beds)
+    ? ad.beds.beds.map((b) => b.type).join(", ")
+    : "";
+
+  const sitzgruppe = Array.isArray(ad.seating?.seatings)
+    ? ad.seating.seatings.map((s) => s.type).join(", ")
+    : "";
+
+  // ----------------------------------------------------
+  // 6) Highlights
+  // ----------------------------------------------------
+  const features = Array.isArray(ad.features) ? ad.features : [];
+
+  const tv = hasFeature(features, "tv");
+  const satAntenne = hasFeature(features, "sat");
+  const rueckfahrkamera = hasFeature(features, "rueckfahrkamera");
+  const tempomat = hasFeature(features, "tempomat");
+  const markise = hasFeature(features, "markise");
+  const fahrradtraeger = hasFeature(features, "fahrradtraeger");
+  const klimaanlage = hasFeature(features, "klimaanlage");
+  const servolenkung = hasFeature(features, "servolenkung");
+  const mover = hasFeature(features, "mover");
+  const ssk = hasFeature(features, "antischlingerkupplung");
+  const zentralverriegelung = hasFeature(features, "zentralverriegelung");
+  const heckgarage = hasFeature(features, "heckgarage");
+
+  // ----------------------------------------------------
+  // 7) Media Cache (unverändert)
   // ----------------------------------------------------
   const media = Array.isArray(ad.media) ? ad.media : [];
 
@@ -99,15 +125,13 @@ export function mapVehicle(ad) {
     .filter((m) => m && m.group === "image" && m.id != null)
     .map((m) => m.id);
 
-  const mainImageId = imageIds.length > 0 ? imageIds[0] : null;
-
-  const mediaCacheJson = JSON.stringify({
-    hauptbild: mainImageId,
+  const mediaCache = JSON.stringify({
+    hauptbild: imageIds[0] || null,
     galerie: imageIds,
   });
 
   // ----------------------------------------------------
-  // 6) Rückgabe für Webflow
+  // 8) Rückgabe
   // ----------------------------------------------------
   return {
     name: baseName,
@@ -135,12 +159,30 @@ export function mapVehicle(ad) {
     getriebe,
 
     beschreibung,
-    "beschreibung-kurz": beschreibung_kurz,
 
     "geraet-id": geraetId,
     "verkauf-miete": verkaufMiete,
 
-    // Media nur gecached
-    "media-cache": mediaCacheJson,
+    gesamtmasse,
+    erstzulassung,
+    schlafplatz,
+    bett,
+    sitzgruppe,
+
+    tv,
+    "sat-antenne": satAntenne,
+    rueckfahrkamera,
+    tempomat,
+    markise,
+    fahrradtraeger,
+    klimaanlage,
+    servolenkung,
+    mover,
+    ssk,
+    zentralverriegelung,
+    heckgarage,
+
+    "media-cache": mediaCache,
   };
 }
+
