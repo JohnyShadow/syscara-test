@@ -10,19 +10,16 @@ export default async function handler(req, res) {
       SYS_API_PASS,
     } = process.env;
 
-    if (
-      !WEBFLOW_TOKEN ||
-      !WEBFLOW_COLLECTION ||
-      !SYS_API_USER ||
-      !SYS_API_PASS
-    ) {
+    if (!WEBFLOW_TOKEN || !WEBFLOW_COLLECTION || !SYS_API_USER || !SYS_API_PASS) {
       return res.status(500).json({
         error:
           "Fehlende ENV Variablen (WEBFLOW_TOKEN, WEBFLOW_COLLECTION, SYS_API_USER, SYS_API_PASS)",
       });
     }
 
-    // 🚗 1. EIN Fahrzeug zum Test laden
+    // --------------------------------------------------
+    // 1️⃣ EIN Fahrzeug zum Test laden
+    // --------------------------------------------------
     const sysId = 135965;
     const sysUrl = `https://api.syscara.com/sale/ads/${sysId}`;
 
@@ -37,7 +34,6 @@ export default async function handler(req, res) {
 
     if (!sysResponse.ok) {
       const text = await sysResponse.text();
-      console.error("Syscara error:", text);
       return res.status(500).json({
         error: "Syscara Request fehlgeschlagen",
         details: text,
@@ -46,39 +42,60 @@ export default async function handler(req, res) {
 
     const ad = await sysResponse.json();
 
-    // 🧩 2. Map Fahrzeugdaten → Webflow Felder
+    // --------------------------------------------------
+    // 2️⃣ Mapping → Webflow Felder
+    // --------------------------------------------------
     const mapped = mapVehicle(ad);
     console.log("✅ Mapped Vehicle:", mapped);
 
-    // 🔍 3. media-cache auswerten → Hauptbild-ID nehmen
+    // --------------------------------------------------
+    // 3️⃣ Media-Cache aus Mapping lesen
+    // --------------------------------------------------
     let mediaCache = null;
-    if (mapped["media-cache"]) {
-      try {
-        mediaCache = JSON.parse(mapped["media-cache"]);
-      } catch (e) {
-        console.warn("Konnte media-cache nicht parsen:", e);
-      }
+
+    try {
+      mediaCache = mapped["media-cache"]
+        ? JSON.parse(mapped["media-cache"])
+        : null;
+    } catch {
+      mediaCache = null;
     }
 
-    const hauptbildId = mediaCache?.hauptbild || null;
+    const origin = req.headers.origin || `https://${req.headers.host}`;
 
-    // 🌐 4. Öffentliche Proxy-URL für das Hauptbild bauen
-    //    → Webflow ruft später diese URL auf und bekommt das Bild
-    const proto = req.headers["x-forwarded-proto"] || "https";
-    const host = req.headers.host;
-    const origin = `${proto}://${host}`;
-
+    // --------------------------------------------------
+    // 4️⃣ Hauptbild (einzeln)
+    // --------------------------------------------------
+    const hauptbildId = mediaCache?.hauptbild ?? null;
     const hauptbildUrl = hauptbildId
-      ? `${origin}/api/media?id=${encodeURIComponent(hauptbildId)}`
+      ? `${origin}/api/media?id=${hauptbildId}`
       : null;
 
-    console.log("➡️ Proxy URL Hauptbild:", hauptbildUrl);
+    // --------------------------------------------------
+    // 5️⃣ Galerie (max. 25 Bilder, Reihenfolge behalten)
+    // --------------------------------------------------
+    let galerieUrls = [];
 
-    // 📝 5. Body für Webflow: alle Felder + optional hauptbild
+    if (Array.isArray(mediaCache?.galerie)) {
+      galerieUrls = mediaCache.galerie
+        .slice(0, 25)
+        .map((id) => `${origin}/api/media?id=${id}`);
+    }
+
+    console.log("🖼️ Hauptbild URL:", hauptbildUrl);
+    console.log("🖼️ Galerie URLs:", galerieUrls.length);
+
+    // --------------------------------------------------
+    // 6️⃣ FieldData für Webflow bauen
+    // --------------------------------------------------
     const fieldData = {
       ...mapped,
       ...(hauptbildUrl ? { hauptbild: hauptbildUrl } : {}),
+      ...(galerieUrls.length ? { galerie: galerieUrls } : {}),
     };
+
+    // media-cache NICHT mehr an Webflow senden
+    delete fieldData["media-cache"];
 
     const body = {
       items: [
@@ -90,7 +107,9 @@ export default async function handler(req, res) {
 
     console.log("➡️ Body an Webflow:", JSON.stringify(body, null, 2));
 
-    // 🚀 6. Request an Webflow (CMS API v2)
+    // --------------------------------------------------
+    // 7️⃣ Webflow API Call
+    // --------------------------------------------------
     const wfUrl = `https://api.webflow.com/v2/collections/${WEBFLOW_COLLECTION}/items`;
 
     const wfResponse = await fetch(wfUrl, {
@@ -113,12 +132,14 @@ export default async function handler(req, res) {
       });
     }
 
-    // 🎉 7. Erfolg
+    // --------------------------------------------------
+    // 8️⃣ Erfolg
+    // --------------------------------------------------
     return res.status(200).json({
       ok: true,
       syscaraId: sysId,
-      mapped,
       hauptbildUrl,
+      galerieCount: galerieUrls.length,
       webflowResponse: wfJson,
     });
   } catch (err) {
