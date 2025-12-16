@@ -17,68 +17,52 @@ export default async function handler(req, res) {
 
     const auth = Buffer.from(`${SYS_API_USER}:${SYS_API_PASS}`).toString("base64");
 
-    // Alle Ads (Syscara liefert hier typischerweise ein Objekt { "135965": {...}, ... }
     const response = await fetch("https://api.syscara.com/sale/ads/", {
       headers: { Authorization: `Basic ${auth}` },
     });
 
-    const text = await response.text();
+    const raw = await response.text();
     if (!response.ok) {
       return res.status(500).json({
-        error: "Syscara returned an error",
+        error: "Syscara error",
         status: response.status,
-        message: text,
+        raw,
       });
     }
 
-    let data;
-    try {
-      data = JSON.parse(text);
-    } catch (err) {
-      return res.status(500).json({
-        error: "Invalid JSON from Syscara",
-        raw: text,
-      });
-    }
+    const data = JSON.parse(raw);
 
-    const ids = Object.keys(data || {});
-    const all = ids.map((id) => {
-      const ad = data[id];
-      // Syscara liefert id manchmal als Key, manchmal im Objekt
-      const resolvedId = ad?.id != null ? ad.id : Number(id);
-      return { id: resolvedId, ...ad };
-    });
+    // Syscara liefert { "135965": {...}, ... }
+    const all = Object.entries(data).map(([key, ad]) => ({
+      id: ad?.id ?? Number(key),
+      ...ad,
+    }));
 
-    // -----------------------------
-    // “LIVE”-Filter fürs Embed-Testen
-    // -----------------------------
     const included = [];
     const excludedReasons = {
-      not_public: 0,
+      not_visible: 0,
       wrong_type: 0,
       no_price: 0,
     };
 
     for (const ad of all) {
-      const isPublic = ad?.status === "BE"; // "BE" war bei dir bislang “sichtbar/öffentlich”
-      if (!isPublic) {
-        excludedReasons.not_public++;
+      // ✅ 1. Sichtbarkeit (NEU)
+      if (ad.visible !== true) {
+        excludedReasons.not_visible++;
         continue;
       }
 
-      const isVehicle = ad?.type === "Reisemobil" || ad?.type === "Caravan";
-      if (!isVehicle) {
+      // ✅ 2. Fahrzeugtyp
+      if (ad.type !== "Reisemobil" && ad.type !== "Caravan") {
         excludedReasons.wrong_type++;
         continue;
       }
 
-      // Viele deiner Fahrzeuge hatten category: [] — also nicht darauf verlassen.
-      // Stattdessen: “live” = hat irgendeinen Preis (Verkauf oder Miete)
+      // ✅ 3. Preis (Verkauf ODER Miete)
       const offer = toNumber(ad?.prices?.offer);
       const rent = toNumber(ad?.prices?.rent);
-      const hasAnyPrice = offer > 0 || rent > 0;
 
-      if (!hasAnyPrice) {
+      if (offer <= 0 && rent <= 0) {
         excludedReasons.no_price++;
         continue;
       }
@@ -86,21 +70,8 @@ export default async function handler(req, res) {
       included.push(ad);
     }
 
-    // Breakdown
     const reisemobile = included.filter((a) => a.type === "Reisemobil").length;
     const caravans = included.filter((a) => a.type === "Caravan").length;
-
-    // Samples (klein halten)
-    const sampleIncluded = included.slice(0, 10).map((a) => ({
-      id: a.id,
-      status: a.status,
-      type: a.type,
-      producer: a.model?.producer || "",
-      series: a.model?.series || "",
-      model: a.model?.model || "",
-      offer: a.prices?.offer ?? null,
-      rent: a.prices?.rent ?? null,
-    }));
 
     return res.status(200).json({
       totalVehicles: all.length,
@@ -109,7 +80,17 @@ export default async function handler(req, res) {
       caravans,
       excluded: all.length - included.length,
       excludedReasons,
-      sampleIncluded,
+      sampleIncluded: included.slice(0, 10).map((a) => ({
+        id: a.id,
+        visible: a.visible,
+        status: a.status,
+        type: a.type,
+        producer: a.model?.producer,
+        series: a.model?.series,
+        model: a.model?.model,
+        offer: a.prices?.offer ?? null,
+        rent: a.prices?.rent ?? null,
+      })),
     });
   } catch (err) {
     return res.status(500).json({
@@ -118,3 +99,4 @@ export default async function handler(req, res) {
     });
   }
 }
+
