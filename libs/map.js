@@ -21,6 +21,7 @@ export function mapVehicle(ad) {
   const producer = ad.model?.producer || "";
   const series = ad.model?.series || "";
   const model = ad.model?.model || "";
+  const modelAdd = ad.model?.model_add || ""; // ✅ NEU
 
   const name =
     [producer, series, model].filter(Boolean).join(" ") ||
@@ -88,7 +89,7 @@ export function mapVehicle(ad) {
     : "";
 
   // ------------------------------------------------
-  // 6) TECHNIK ✅ NEU
+  // 6) Technik
   // ------------------------------------------------
   const ps =
     ad.engine?.ps != null ? String(ad.engine.ps) : "";
@@ -160,6 +161,7 @@ export function mapVehicle(ad) {
     hersteller: producer,
     serie: series,
     modell: model,
+    "modell-zusatz": modelAdd, // ✅ NEU
 
     fahrzeugart,
     fahrzeugtyp,
@@ -179,7 +181,6 @@ export function mapVehicle(ad) {
     bett,
     sitzgruppe,
 
-    // ✅ Technik
     ps,
     kw,
     kraftstoff,
