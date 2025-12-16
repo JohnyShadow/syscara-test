@@ -176,7 +176,6 @@ export default async function handler(req, res) {
         }
 
         if (!dryRun) {
-          // PATCH
           await wf(
             `${WEBFLOW_BASE}/collections/${WEBFLOW_COLLECTION}/items/${existing.id}`,
             "PATCH",
@@ -184,11 +183,12 @@ export default async function handler(req, res) {
             { fieldData: mapped }
           );
 
-          // 🔥 PUBLISH
+          // ✅ PUBLISH (STAGING)
           await wf(
             `${WEBFLOW_BASE}/collections/${WEBFLOW_COLLECTION}/items/${existing.id}/publish`,
             "POST",
-            WEBFLOW_TOKEN
+            WEBFLOW_TOKEN,
+            { publishToDomains: ["staging"] }
           );
         }
 
@@ -206,11 +206,12 @@ export default async function handler(req, res) {
 
           const newId = createdItem.items[0].id;
 
-          // 🔥 PUBLISH
+          // ✅ PUBLISH (STAGING)
           await wf(
             `${WEBFLOW_BASE}/collections/${WEBFLOW_COLLECTION}/items/${newId}/publish`,
             "POST",
-            WEBFLOW_TOKEN
+            WEBFLOW_TOKEN,
+            { publishToDomains: ["staging"] }
           );
         }
 
@@ -253,3 +254,4 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: String(err) });
   }
 }
+
