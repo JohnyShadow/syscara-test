@@ -4,7 +4,7 @@ import { mapVehicle } from "../libs/map.js";
 let featureMapCache = null;
 
 // ----------------------------------------------------
-// Webflow Helper
+// Helper: Webflow GET
 // ----------------------------------------------------
 async function webflowRequest(url, token) {
   const res = await fetch(url, {
@@ -13,14 +13,13 @@ async function webflowRequest(url, token) {
       accept: "application/json",
     },
   });
-
   const json = await res.json();
   if (!res.ok) throw json;
   return json;
 }
 
 // ----------------------------------------------------
-// Feature Map laden
+// Feature Map (slug -> ID)
 // ----------------------------------------------------
 async function getFeatureMap(token, collectionId) {
   if (featureMapCache) return featureMapCache;
@@ -46,7 +45,7 @@ function getOrigin(req) {
 }
 
 // ----------------------------------------------------
-// API Handler
+// API Handler (BATCH SYNC)
 // ----------------------------------------------------
 export default async function handler(req, res) {
   try {
@@ -58,103 +57,138 @@ export default async function handler(req, res) {
       SYS_API_PASS,
     } = process.env;
 
-    // 🔹 Syscara laden
-    const sysId = 135965;
-    const sysRes = await fetch(
-      `https://api.syscara.com/sale/ads/${sysId}`,
-      {
-        headers: {
-          Authorization:
-            "Basic " +
-            Buffer.from(`${SYS_API_USER}:${SYS_API_PASS}`).toString("base64"),
-        },
-      }
-    );
-
-    if (!sysRes.ok) {
-      return res.status(500).json({ error: "Syscara error" });
+    if (
+      !WEBFLOW_TOKEN ||
+      !WEBFLOW_COLLECTION ||
+      !WEBFLOW_FEATURES_COLLECTION ||
+      !SYS_API_USER ||
+      !SYS_API_PASS
+    ) {
+      return res.status(500).json({ error: "Missing ENV vars" });
     }
 
-   const rawAd = await sysRes.json();
+    // --------------------------------------------
+    // Batch Parameter
+    // --------------------------------------------
+    const limit = Math.min(parseInt(req.query.limit || "5", 10), 25);
+    const offset = parseInt(req.query.offset || "0", 10);
 
-// 🔥 WICHTIG: echtes Fahrzeug extrahieren
-const ad =
-  rawAd && typeof rawAd === "object" && rawAd[sysId]
-    ? rawAd[sysId]
-    : rawAd;
+    // --------------------------------------------
+    // Syscara: alle Ads laden
+    // --------------------------------------------
+    const auth =
+      "Basic " +
+      Buffer.from(`${SYS_API_USER}:${SYS_API_PASS}`).toString("base64");
 
-const mapped = mapVehicle(ad);
+    const adsRes = await fetch("https://api.syscara.com/sale/ads/", {
+      headers: { Authorization: auth },
+    });
 
-
-    // ------------------------------------------------
-    // 🖼️ Bilder aus media-cache
-    // ------------------------------------------------
-    const origin = getOrigin(req);
-
-    if (mapped["media-cache"]) {
-      const cache = JSON.parse(mapped["media-cache"]);
-
-      if (cache.hauptbild) {
-        mapped.hauptbild = `${origin}/api/media?id=${cache.hauptbild}`;
-      }
-
-      if (Array.isArray(cache.galerie)) {
-        mapped.galerie = cache.galerie
-          .slice(0, 25)
-          .map((id) => `${origin}/api/media?id=${id}`);
-      }
-
-      if (cache.grundriss) {
-        mapped.grundriss = `${origin}/api/media?id=${cache.grundriss}`;
-      }
+    if (!adsRes.ok) {
+      const text = await adsRes.text();
+      return res.status(500).json({ error: "Syscara error", details: text });
     }
 
-    // ------------------------------------------------
-    // 🔹 Features verknüpfen
-    // ------------------------------------------------
+    const adsRaw = await adsRes.json();
+    const ads = Object.values(adsRaw);
+
+    const batch = ads.slice(offset, offset + limit);
+
+    // --------------------------------------------
+    // Feature Map laden
+    // --------------------------------------------
     const featureMap = await getFeatureMap(
       WEBFLOW_TOKEN,
       WEBFLOW_FEATURES_COLLECTION
     );
 
-    const featureIds = (mapped.featureSlugs || [])
-      .map((slug) => featureMap[slug])
-      .filter(Boolean);
+    const origin = getOrigin(req);
 
-    delete mapped.featureSlugs;
-    mapped.features = featureIds;
+    const results = [];
 
-    // ------------------------------------------------
-    // 🔹 Webflow Create
-    // ------------------------------------------------
-    const body = {
-      items: [{ fieldData: mapped }],
-    };
+    // --------------------------------------------
+    // Batch verarbeiten
+    // --------------------------------------------
+    for (const ad of batch) {
+      try {
+        const mapped = mapVehicle(ad);
 
-    const wfRes = await fetch(
-      `https://api.webflow.com/v2/collections/${WEBFLOW_COLLECTION}/items`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${WEBFLOW_TOKEN}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(body),
+        // ------------------------------
+        // Bilder aus media-cache
+        // ------------------------------
+        if (mapped["media-cache"]) {
+          const cache = JSON.parse(mapped["media-cache"]);
+
+          if (cache.hauptbild) {
+            mapped.hauptbild = `${origin}/api/media?id=${cache.hauptbild}`;
+          }
+
+          if (Array.isArray(cache.galerie)) {
+            mapped.galerie = cache.galerie
+              .slice(0, 25)
+              .map((id) => `${origin}/api/media?id=${id}`);
+          }
+
+          if (cache.grundriss) {
+            mapped.grundriss = `${origin}/api/media?id=${cache.grundriss}`;
+          }
+        }
+
+        // ------------------------------
+        // Features verknüpfen
+        // ------------------------------
+        const featureIds = (mapped.featureSlugs || [])
+          .map((slug) => featureMap[slug])
+          .filter(Boolean);
+
+        delete mapped.featureSlugs;
+        mapped.features = featureIds;
+
+        // ------------------------------
+        // Webflow CREATE
+        // ------------------------------
+        const body = {
+          items: [{ fieldData: mapped }],
+        };
+
+        const wfRes = await fetch(
+          `https://api.webflow.com/v2/collections/${WEBFLOW_COLLECTION}/items`,
+          {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${WEBFLOW_TOKEN}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(body),
+          }
+        );
+
+        const wfJson = await wfRes.json();
+        if (!wfRes.ok) throw wfJson;
+
+        results.push({
+          id: mapped["fahrzeug-id"],
+          name: mapped.name,
+          status: "created",
+        });
+      } catch (err) {
+        results.push({
+          id: ad?.id || null,
+          error: err?.message || err,
+        });
       }
-    );
+    }
 
-    const wfJson = await wfRes.json();
-    if (!wfRes.ok) throw wfJson;
-
+    // --------------------------------------------
+    // Ergebnis
+    // --------------------------------------------
     return res.status(200).json({
       ok: true,
-      vehicle: mapped.name,
-      images: {
-        hauptbild: !!mapped.hauptbild,
-        galerie: mapped.galerie?.length || 0,
-        grundriss: !!mapped.grundriss,
-      },
-      featuresLinked: featureIds.length,
+      totalAds: ads.length,
+      limit,
+      offset,
+      processed: results.length,
+      results,
     });
   } catch (e) {
     console.error(e);
