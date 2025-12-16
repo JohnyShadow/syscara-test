@@ -52,7 +52,7 @@ export function mapVehicle(ad) {
       : "";
 
   // ------------------------------------------------
-  // 4) Maße
+  // 4) Maße & Gewichte
   // ------------------------------------------------
   const breite = ad.dimensions?.width
     ? String(ad.dimensions.width)
@@ -66,14 +66,50 @@ export function mapVehicle(ad) {
     ? String(ad.dimensions.length)
     : "";
 
+  const gesamtmasse = ad.weights?.total
+    ? String(ad.weights.total)
+    : "";
+
   // ------------------------------------------------
-  // 5) Verkauf / Miete
+  // 5) Zulassung / Innenraum
+  // ------------------------------------------------
+  const erstzulassung = ad.date?.registration || "";
+
+  const schlafplatz = ad.beds?.num
+    ? String(ad.beds.num)
+    : "";
+
+  const bett = Array.isArray(ad.beds?.beds)
+    ? ad.beds.beds.map((b) => b.type).join(", ")
+    : "";
+
+  const sitzgruppe = Array.isArray(ad.seating?.seatings)
+    ? ad.seating.seatings.map((s) => s.type).join(", ")
+    : "";
+
+  // ------------------------------------------------
+  // 6) Texte
+  // ------------------------------------------------
+  const beschreibung =
+    ad.texts?.description ||
+    ad.description ||
+    "";
+
+  // ------------------------------------------------
+  // 7) Verkauf / Miete
   // ------------------------------------------------
   const verkaufMiete =
     ad.category === "Rent" ? "miete" : "verkauf";
 
   // ------------------------------------------------
-  // 6) Features → SLUGS für sync.js
+  // 8) Geräte-ID (zusätzlich zur Fahrzeug-ID)
+  // ------------------------------------------------
+  const geraetId = ad.identifier?.internal
+    ? String(ad.identifier.internal)
+    : "";
+
+  // ------------------------------------------------
+  // 9) Features → SLUGS
   // ------------------------------------------------
   const features = Array.isArray(ad.features) ? ad.features : [];
 
@@ -82,7 +118,7 @@ export function mapVehicle(ad) {
   );
 
   // ------------------------------------------------
-  // 7) Media-Cache
+  // 10) Media-Cache (IDs only)
   // ------------------------------------------------
   const media = Array.isArray(ad.media) ? ad.media : [];
 
@@ -101,7 +137,7 @@ export function mapVehicle(ad) {
   });
 
   // ------------------------------------------------
-  // 8) Rückgabe (VOLLSTÄNDIG)
+  // 11) RÜCKGABE – ALLES DRIN
   // ------------------------------------------------
   return {
     name,
@@ -123,7 +159,16 @@ export function mapVehicle(ad) {
     breite,
     hoehe,
     laenge,
+    gesamtmasse,
 
+    erstzulassung,
+    schlafplatz,
+    bett,
+    sitzgruppe,
+
+    beschreibung,
+
+    "geraet-id": geraetId,
     "verkauf-miete": verkaufMiete,
 
     featureSlugs,
