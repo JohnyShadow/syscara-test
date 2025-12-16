@@ -9,29 +9,15 @@ function slugify(str) {
     .replace(/(^-|-$)+/g, "");
 }
 
-export function mapVehicle(input) {
-  // ----------------------------------------------------
-  // 1) DAS WAR DER ENTSCHEIDENDE TEIL (hat früher funktioniert)
-  //    Syscara liefert: { "135965": { ... } }
-  // ----------------------------------------------------
-  let ad = input;
-  let vehicleId = "";
+export function mapVehicle(ad) {
+  // ------------------------------------------------
+  // 1) ID
+  // ------------------------------------------------
+  const vehicleId = ad?.id ? String(ad.id) : "";
 
-  if (typeof ad === "object" && ad !== null && !ad.id) {
-    const keys = Object.keys(ad);
-    if (keys.length === 1 && typeof ad[keys[0]] === "object") {
-      vehicleId = keys[0];
-      ad = ad[keys[0]];
-    }
-  }
-
-  if (!vehicleId && ad?.id) {
-    vehicleId = String(ad.id);
-  }
-
-  // ----------------------------------------------------
-  // 2) Name & Slug (DAS HAT SCHON FUNKTIONIERT)
-  // ----------------------------------------------------
+  // ------------------------------------------------
+  // 2) Name & Slug
+  // ------------------------------------------------
   const producer = ad.model?.producer || "";
   const series = ad.model?.series || "";
   const model = ad.model?.model || "";
@@ -44,9 +30,60 @@ export function mapVehicle(input) {
     ? `${vehicleId}-${slugify(name)}`
     : slugify(name);
 
-  // ----------------------------------------------------
-  // 3) Media (wie bei deinem funktionierenden Stand)
-  // ----------------------------------------------------
+  // ------------------------------------------------
+  // 3) Basisdaten
+  // ------------------------------------------------
+  const zustand = ad.condition || "";
+  const fahrzeugart = ad.type || "";
+  const fahrzeugtyp = ad.typeof || "";
+
+  const baujahr = ad.model?.modelyear
+    ? String(ad.model.modelyear)
+    : "";
+
+  const kilometer =
+    ad.mileage != null && ad.mileage !== 0
+      ? String(ad.mileage)
+      : "";
+
+  const preis =
+    ad.prices?.offer != null
+      ? String(ad.prices.offer)
+      : "";
+
+  // ------------------------------------------------
+  // 4) Maße
+  // ------------------------------------------------
+  const breite = ad.dimensions?.width
+    ? String(ad.dimensions.width)
+    : "";
+
+  const hoehe = ad.dimensions?.height
+    ? String(ad.dimensions.height)
+    : "";
+
+  const laenge = ad.dimensions?.length
+    ? String(ad.dimensions.length)
+    : "";
+
+  // ------------------------------------------------
+  // 5) Verkauf / Miete
+  // ------------------------------------------------
+  const verkaufMiete =
+    ad.category === "Rent" ? "miete" : "verkauf";
+
+  // ------------------------------------------------
+  // 6) Features → SLUGS für sync.js
+  // ------------------------------------------------
+  const features = Array.isArray(ad.features) ? ad.features : [];
+
+  const featureSlugs = features.map((f) =>
+    String(f).toLowerCase().replace(/_/g, "-")
+  );
+
+  // ------------------------------------------------
+  // 7) Media-Cache
+  // ------------------------------------------------
   const media = Array.isArray(ad.media) ? ad.media : [];
 
   const images = media.filter(
@@ -63,15 +100,35 @@ export function mapVehicle(input) {
     grundriss,
   });
 
-  // ----------------------------------------------------
-  // 4) Rückgabe – MINIMAL + ERWEITERBAR
-  // ----------------------------------------------------
+  // ------------------------------------------------
+  // 8) Rückgabe (VOLLSTÄNDIG)
+  // ------------------------------------------------
   return {
     name,
     slug,
     "fahrzeug-id": vehicleId,
-    "media-cache": mediaCache,
 
-    // alles andere bleibt UNBERÜHRT
+    hersteller: producer,
+    serie: series,
+    modell: model,
+
+    fahrzeugart,
+    fahrzeugtyp,
+    zustand,
+
+    baujahr,
+    kilometer,
+    preis,
+
+    breite,
+    hoehe,
+    laenge,
+
+    "verkauf-miete": verkaufMiete,
+
+    featureSlugs,
+
+    "media-cache": mediaCache,
   };
 }
+
