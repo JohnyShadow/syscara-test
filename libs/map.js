@@ -131,4 +131,3 @@ export function mapVehicle(ad) {
     "media-cache": mediaCache,
   };
 }
-
