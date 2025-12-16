@@ -11,33 +11,26 @@ function slugify(str) {
 
 export function mapVehicle(input) {
   // ----------------------------------------------------
-  // 1) Syscara-Response NORMALISIEREN (WICHTIG!)
+  // 1) DAS WAR DER ENTSCHEIDENDE TEIL (hat früher funktioniert)
+  //    Syscara liefert: { "135965": { ... } }
   // ----------------------------------------------------
   let ad = input;
+  let vehicleId = "";
 
-  // Variante: { "135965": { ... } }
-  if (!ad.id && typeof ad === "object") {
+  if (typeof ad === "object" && ad !== null && !ad.id) {
     const keys = Object.keys(ad);
     if (keys.length === 1 && typeof ad[keys[0]] === "object") {
+      vehicleId = keys[0];
       ad = ad[keys[0]];
     }
   }
 
-  // Variante: { DATA: { "135965": { ... } } }
-  if (!ad.id && ad.DATA) {
-    const keys = Object.keys(ad.DATA);
-    if (keys.length === 1) {
-      ad = ad.DATA[keys[0]];
-    }
+  if (!vehicleId && ad?.id) {
+    vehicleId = String(ad.id);
   }
 
   // ----------------------------------------------------
-  // 2) Fahrzeug-ID (JETZT zuverlässig)
-  // ----------------------------------------------------
-  const vehicleId = ad?.id ? String(ad.id) : "";
-
-  // ----------------------------------------------------
-  // 3) Name & Slug
+  // 2) Name & Slug (DAS HAT SCHON FUNKTIONIERT)
   // ----------------------------------------------------
   const producer = ad.model?.producer || "";
   const series = ad.model?.series || "";
@@ -52,7 +45,7 @@ export function mapVehicle(input) {
     : slugify(name);
 
   // ----------------------------------------------------
-  // 4) Media-Cache (IDs ONLY)
+  // 3) Media (wie bei deinem funktionierenden Stand)
   // ----------------------------------------------------
   const media = Array.isArray(ad.media) ? ad.media : [];
 
@@ -71,13 +64,14 @@ export function mapVehicle(input) {
   });
 
   // ----------------------------------------------------
-  // 5) Rückgabe (nichts entfernt!)
+  // 4) Rückgabe – MINIMAL + ERWEITERBAR
   // ----------------------------------------------------
   return {
     name,
     slug,
     "fahrzeug-id": vehicleId,
     "media-cache": mediaCache,
+
+    // alles andere bleibt UNBERÜHRT
   };
 }
-
