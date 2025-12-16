@@ -12,19 +12,19 @@ async function wf(url, method, token, body) {
     method,
     headers: {
       Authorization: `Bearer ${token}`,
-      "Content-Type": body ? "application/json" : undefined,
       accept: "application/json",
+      ...(body ? { "Content-Type": "application/json" } : {}),
     },
     body: body ? JSON.stringify(body) : undefined,
   });
 
-  const json = res.status !== 204 ? await res.json() : null;
+  if (res.status === 204) return null;
+
+  const json = await res.json();
   if (!res.ok) throw json;
   return json;
 }
 
-// ----------------------------------------------------
-// Helper: Origin (für Media Proxy)
 // ----------------------------------------------------
 function getOrigin(req) {
   const proto = req.headers["x-forwarded-proto"] || "https";
@@ -67,6 +67,10 @@ export default async function handler(req, res) {
       SYS_API_PASS,
     } = process.env;
 
+    const limit = Math.min(parseInt(req.query.limit || "50", 10), 50);
+    const offset = parseInt(req.query.offset || "0", 10);
+    const dryRun = req.query.dryRun === "true";
+
     if (
       !WEBFLOW_TOKEN ||
       !WEBFLOW_COLLECTION ||
@@ -82,28 +86,24 @@ export default async function handler(req, res) {
       Buffer.from(`${SYS_API_USER}:${SYS_API_PASS}`).toString("base64");
 
     // ------------------------------------------------
-    // 1) Alle Syscara Ads laden
+    // 1) Syscara Ads laden
     // ------------------------------------------------
     const sysRes = await fetch("https://api.syscara.com/sale/ads/", {
       headers: { Authorization: auth },
     });
 
-    if (!sysRes.ok) {
-      const t = await sysRes.text();
-      throw new Error(t);
-    }
+    if (!sysRes.ok) throw await sysRes.text();
 
     const rawAds = await sysRes.json();
     const sysVehicles = Object.values(rawAds);
 
-    // Map sysId → Fahrzeug
     const sysMap = new Map();
     for (const ad of sysVehicles) {
       if (ad?.id) sysMap.set(String(ad.id), ad);
     }
 
     // ------------------------------------------------
-    // 2) Alle Webflow Items laden
+    // 2) Webflow Items laden
     // ------------------------------------------------
     const wfItems = await wf(
       `${WEBFLOW_BASE}/collections/${WEBFLOW_COLLECTION}/items?limit=1000`,
@@ -118,7 +118,7 @@ export default async function handler(req, res) {
     }
 
     // ------------------------------------------------
-    // 3) Feature Map laden
+    // 3) Feature Map
     // ------------------------------------------------
     const featureMap = await getFeatureMap(
       WEBFLOW_TOKEN,
@@ -132,12 +132,17 @@ export default async function handler(req, res) {
     let deleted = 0;
 
     // ------------------------------------------------
-    // 4) CREATE / UPDATE
+    // 4) CREATE / UPDATE (Batch)
     // ------------------------------------------------
-    for (const [id, ad] of sysMap.entries()) {
-      let mapped = mapVehicle(ad);
+    const batch = Array.from(sysMap.entries()).slice(
+      offset,
+      offset + limit
+    );
 
-      // 🖼️ Bilder aus media-cache
+    for (const [id, ad] of batch) {
+      const mapped = mapVehicle(ad);
+
+      // Bilder aus media-cache
       if (mapped["media-cache"]) {
         const cache = JSON.parse(mapped["media-cache"]);
 
@@ -156,7 +161,7 @@ export default async function handler(req, res) {
         }
       }
 
-      // 🔗 Features (Multi-Reference)
+      // Features
       const featureIds = (mapped.featureSlugs || [])
         .map((slug) => featureMap[slug])
         .filter(Boolean);
@@ -164,33 +169,26 @@ export default async function handler(req, res) {
       delete mapped.featureSlugs;
       mapped.features = featureIds;
 
-      // --------
-      // UPDATE
-      // --------
       if (wfMap.has(id)) {
-        const existing = wfMap.get(id);
-
-        await wf(
-          `${WEBFLOW_BASE}/collections/${WEBFLOW_COLLECTION}/items/${existing.id}?live=true`,
-          "PATCH",
-          WEBFLOW_TOKEN,
-          { fieldData: mapped }
-        );
-
         updated++;
-      }
-      // --------
-      // CREATE
-      // --------
-      else {
-        await wf(
-          `${WEBFLOW_BASE}/collections/${WEBFLOW_COLLECTION}/items?live=true`,
-          "POST",
-          WEBFLOW_TOKEN,
-          { items: [{ fieldData: mapped }] }
-        );
-
+        if (!dryRun) {
+          await wf(
+            `${WEBFLOW_BASE}/collections/${WEBFLOW_COLLECTION}/items/${wfMap.get(id).id}?live=true`,
+            "PATCH",
+            WEBFLOW_TOKEN,
+            { fieldData: mapped }
+          );
+        }
+      } else {
         created++;
+        if (!dryRun) {
+          await wf(
+            `${WEBFLOW_BASE}/collections/${WEBFLOW_COLLECTION}/items?live=true`,
+            "POST",
+            WEBFLOW_TOKEN,
+            { items: [{ fieldData: mapped }] }
+          );
+        }
       }
     }
 
@@ -199,12 +197,14 @@ export default async function handler(req, res) {
     // ------------------------------------------------
     for (const [fid, item] of wfMap.entries()) {
       if (!sysMap.has(fid)) {
-        await wf(
-          `${WEBFLOW_BASE}/collections/${WEBFLOW_COLLECTION}/items/${item.id}`,
-          "DELETE",
-          WEBFLOW_TOKEN
-        );
         deleted++;
+        if (!dryRun) {
+          await wf(
+            `${WEBFLOW_BASE}/collections/${WEBFLOW_COLLECTION}/items/${item.id}`,
+            "DELETE",
+            WEBFLOW_TOKEN
+          );
+        }
       }
     }
 
@@ -213,8 +213,10 @@ export default async function handler(req, res) {
     // ------------------------------------------------
     return res.status(200).json({
       ok: true,
-      syscara: sysMap.size,
-      webflow: wfMap.size,
+      dryRun,
+      batch: { limit, offset },
+      syscaraTotal: sysMap.size,
+      webflowTotal: wfMap.size,
       created,
       updated,
       deleted,
