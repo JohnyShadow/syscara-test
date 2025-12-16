@@ -4,15 +4,14 @@ function slugify(str) {
   return String(str)
     .toLowerCase()
     .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "") // Umlaute entfernen
+    .replace(/[\u0300-\u036f]/g, "")
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/(^-|-$)+/g, "");
 }
 
 export function mapVehicle(ad) {
   // ----------------------------------------------------
-  // 1) Falls Syscara das Fahrzeug als { "135965": { ... }} liefert,
-  //    ziehen wir zuerst das innere Objekt raus.
+  // 1) Sonderfall: { "135965": { ... } }
   // ----------------------------------------------------
   let vehicleId = null;
 
@@ -29,14 +28,13 @@ export function mapVehicle(ad) {
   vehicleId = vehicleId ? String(vehicleId) : "";
 
   // ----------------------------------------------------
-  // 2) Grunddaten / Name / Slug
+  // 2) Name & Slug (OHNE modell-zusatz)
   // ----------------------------------------------------
   const producer = ad.model?.producer || "";
   const series = ad.model?.series || "";
   const model = ad.model?.model || "";
   const model_add = ad.model?.model_add || "";
 
-  // Name OHNE model_add (damit die ID der "Unterscheider" ist)
   const baseNameParts = [producer, series, model].filter(Boolean);
   const baseName =
     baseNameParts.join(" ").trim() || `Fahrzeug ${vehicleId || "unbekannt"}`;
@@ -45,7 +43,7 @@ export function mapVehicle(ad) {
   const slug = vehicleId ? `${vehicleId}-${slugBase}` : slugBase;
 
   // ----------------------------------------------------
-  // 3) Weitere Felder (einfach Strings draus machen)
+  // 3) Basisdaten
   // ----------------------------------------------------
   const fahrzeugart = ad.type || "";
   const fahrzeugtyp = ad.typeof || "";
@@ -55,50 +53,61 @@ export function mapVehicle(ad) {
     ? String(ad.model.modelyear)
     : "";
 
-  const kilometer = ad.mileage != null && ad.mileage !== 0
-    ? String(ad.mileage)
-    : "";
+  const kilometer =
+    ad.mileage != null && ad.mileage !== 0 ? String(ad.mileage) : "";
 
-  const preis = ad.prices?.offer != null
-    ? String(ad.prices.offer)
-    : "";
+  const preis =
+    ad.prices?.offer != null ? String(ad.prices.offer) : "";
 
-  const breite = ad.dimensions?.width != null
-    ? String(ad.dimensions.width)
-    : "";
+  const breite =
+    ad.dimensions?.width != null ? String(ad.dimensions.width) : "";
 
-  const hoehe = ad.dimensions?.height != null
-    ? String(ad.dimensions.height)
-    : "";
+  const hoehe =
+    ad.dimensions?.height != null ? String(ad.dimensions.height) : "";
 
-  const laenge = ad.dimensions?.length != null
-    ? String(ad.dimensions.length)
-    : "";
+  const laenge =
+    ad.dimensions?.length != null ? String(ad.dimensions.length) : "";
 
   // ----------------------------------------------------
-  // 4) MEDIA-IDS SAMMELN & media-cache bauen (Version A)
-  //    → wir speichern NUR IDs, keine URLs!
+  // 4) NEU: Technik & Texte
+  // ----------------------------------------------------
+  const ps =
+    ad.engine?.ps != null ? String(ad.engine.ps) : "";
+
+  const kw =
+    ad.engine?.kw != null ? String(ad.engine.kw) : "";
+
+  const kraftstoff = ad.engine?.fuel || "";
+  const getriebe = ad.engine?.gear || "";
+
+  const beschreibung = ad.texts?.description || "";
+  const beschreibung_kurz = ad.texts?.description_plain || "";
+
+  const geraetId = ad.identifier?.internal
+    ? String(ad.identifier.internal)
+    : "";
+
+  // Verkauf / Miete – Logik kommt später
+  const verkaufMiete = "";
+
+  // ----------------------------------------------------
+  // 5) MEDIA-CACHE (Version A – nur IDs)
   // ----------------------------------------------------
   const media = Array.isArray(ad.media) ? ad.media : [];
 
-  // Nur echte Bilder (group === "image")
   const imageIds = media
     .filter((m) => m && m.group === "image" && m.id != null)
     .map((m) => m.id);
 
   const mainImageId = imageIds.length > 0 ? imageIds[0] : null;
 
-  const mediaCacheObject = {
+  const mediaCacheJson = JSON.stringify({
     hauptbild: mainImageId,
     galerie: imageIds,
-  };
-
-  const mediaCacheJson = JSON.stringify(mediaCacheObject);
+  });
 
   // ----------------------------------------------------
-  // 5) Mapping für Webflow zurückgeben
-  //    Bilderfelder lassen wir VORERST LEER / UNBENUTZT,
-  //    bis wir saubere öffentliche URLs / Proxy haben.
+  // 6) Rückgabe für Webflow
   // ----------------------------------------------------
   return {
     name: baseName,
@@ -120,16 +129,18 @@ export function mapVehicle(ad) {
     hoehe,
     laenge,
 
-    // Nur Cache-Feld – hier liegen die Syscara-IDs drin:
-    "media-cache": mediaCacheJson,
+    ps,
+    kw,
+    kraftstoff,
+    getriebe,
 
-    // WICHTIG:
-    // hauptbild & galerie NICHT setzen, damit Webflow
-    // keine kaputten Remote-URLs laden will.
-    // Wenn wir später einen Bild-Proxy gebaut haben,
-    // füllen wir diese Felder auf Basis von media-cache.
-    // hauptbild: null,
-    // galerie: [],
+    beschreibung,
+    "beschreibung-kurz": beschreibung_kurz,
+
+    "geraet-id": geraetId,
+    "verkauf-miete": verkaufMiete,
+
+    // Media nur gecached
+    "media-cache": mediaCacheJson,
   };
 }
-
