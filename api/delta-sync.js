@@ -5,9 +5,9 @@ import crypto from "crypto";
 const WEBFLOW_BASE = "https://api.webflow.com/v2";
 let featureMapCache = null;
 
-// ----------------------------------------------------
-// Helper: Hash
-// ----------------------------------------------------
+/* ----------------------------------------------------
+   HASH
+---------------------------------------------------- */
 function createHash(obj) {
   return crypto
     .createHash("sha1")
@@ -15,57 +15,79 @@ function createHash(obj) {
     .digest("hex");
 }
 
-// ----------------------------------------------------
-// Helper: Webflow Request
-// ----------------------------------------------------
+/* ----------------------------------------------------
+   WEBFLOW REQUEST
+---------------------------------------------------- */
 async function wf(url, method, token, body) {
   const res = await fetch(url, {
     method,
     headers: {
       Authorization: `Bearer ${token}`,
+      Accept: "application/json",
       ...(body ? { "Content-Type": "application/json" } : {}),
-      accept: "application/json",
     },
     body: body ? JSON.stringify(body) : undefined,
   });
 
   const json = res.status !== 204 ? await res.json() : null;
-  if (!res.ok) throw json;
+  if (!res.ok) throw json || await res.text();
   return json;
 }
 
-// ----------------------------------------------------
+/* ----------------------------------------------------
+   ORIGIN (für Media Proxy)
+---------------------------------------------------- */
 function getOrigin(req) {
   const proto = req.headers["x-forwarded-proto"] || "https";
   const host = req.headers["x-forwarded-host"] || req.headers.host;
   return `${proto}://${host}`;
 }
 
-// ----------------------------------------------------
-// Feature Map (slug → ID)
-// ----------------------------------------------------
+/* ----------------------------------------------------
+   FEATURE MAP (slug → id)
+---------------------------------------------------- */
 async function getFeatureMap(token, collectionId) {
   if (featureMapCache) return featureMapCache;
 
-  const data = await wf(
-    `${WEBFLOW_BASE}/collections/${collectionId}/items?limit=1000`,
-    "GET",
-    token
-  );
-
   const map = {};
-  for (const item of data.items || []) {
-    const slug = item.fieldData?.slug;
-    if (slug) map[slug] = item.id;
+  let offset = 0;
+  const limit = 100;
+
+  while (true) {
+    const res = await wf(
+      `${WEBFLOW_BASE}/collections/${collectionId}/items?limit=${limit}&offset=${offset}`,
+      "GET",
+      token
+    );
+
+    for (const item of res.items || []) {
+      const slug = item.fieldData?.slug;
+      if (slug) map[slug] = item.id;
+    }
+
+    if (!res.items || res.items.length < limit) break;
+    offset += limit;
   }
 
   featureMapCache = map;
   return map;
 }
 
-// ----------------------------------------------------
-// API Handler
-// ----------------------------------------------------
+/* ----------------------------------------------------
+   PUBLISH (V2, STAGING)
+---------------------------------------------------- */
+async function publishItem(collectionId, token, itemId) {
+  return wf(
+    `${WEBFLOW_BASE}/collections/${collectionId}/items/publish`,
+    "POST",
+    token,
+    { itemIds: [itemId] }
+  );
+}
+
+/* ----------------------------------------------------
+   API HANDLER
+---------------------------------------------------- */
 export default async function handler(req, res) {
   try {
     const {
@@ -76,17 +98,17 @@ export default async function handler(req, res) {
       SYS_API_PASS,
     } = process.env;
 
-    const limit = Math.min(parseInt(req.query.limit || "25", 10), 50);
+    const limit = Math.min(parseInt(req.query.limit || "25", 10), 25);
     const offset = parseInt(req.query.offset || "0", 10);
     const dryRun = req.query.dry === "1";
 
+    /* ----------------------------------------------
+       SYSCARA FETCH
+    ---------------------------------------------- */
     const auth =
       "Basic " +
       Buffer.from(`${SYS_API_USER}:${SYS_API_PASS}`).toString("base64");
 
-    // ------------------------------------------------
-    // 1) Syscara Ads
-    // ------------------------------------------------
     const sysRes = await fetch("https://api.syscara.com/sale/ads/", {
       headers: { Authorization: auth },
     });
@@ -102,24 +124,31 @@ export default async function handler(req, res) {
       if (ad?.id) sysMap.set(String(ad.id), ad);
     }
 
-    // ------------------------------------------------
-    // 2) Webflow Items
-    // ------------------------------------------------
-    const wfItems = await wf(
-      `${WEBFLOW_BASE}/collections/${WEBFLOW_COLLECTION}/items?limit=1000`,
-      "GET",
-      WEBFLOW_TOKEN
-    );
-
+    /* ----------------------------------------------
+       WEBFLOW ITEMS (paginiert!)
+    ---------------------------------------------- */
     const wfMap = new Map();
-    for (const item of wfItems.items || []) {
-      const fid = item.fieldData?.["fahrzeug-id"];
-      if (fid) wfMap.set(String(fid), item);
+    let wfOffset = 0;
+
+    while (true) {
+      const wfRes = await wf(
+        `${WEBFLOW_BASE}/collections/${WEBFLOW_COLLECTION}/items?limit=100&offset=${wfOffset}`,
+        "GET",
+        WEBFLOW_TOKEN
+      );
+
+      for (const item of wfRes.items || []) {
+        const fid = item.fieldData?.["fahrzeug-id"];
+        if (fid) wfMap.set(String(fid), item);
+      }
+
+      if (!wfRes.items || wfRes.items.length < 100) break;
+      wfOffset += 100;
     }
 
-    // ------------------------------------------------
-    // 3) Feature Map
-    // ------------------------------------------------
+    /* ----------------------------------------------
+       FEATURE MAP
+    ---------------------------------------------- */
     const featureMap = await getFeatureMap(
       WEBFLOW_TOKEN,
       WEBFLOW_FEATURES_COLLECTION
@@ -133,14 +162,14 @@ export default async function handler(req, res) {
     let deleted = 0;
     const errors = [];
 
-    // ------------------------------------------------
-    // 4) CREATE / UPDATE (STABIL)
-    // ------------------------------------------------
+    /* ----------------------------------------------
+       CREATE / UPDATE
+    ---------------------------------------------- */
     for (const ad of batch) {
       try {
         const mapped = mapVehicle(ad);
 
-        // 🖼️ Media
+        // MEDIA
         if (mapped["media-cache"]) {
           const cache = JSON.parse(mapped["media-cache"]);
 
@@ -156,7 +185,7 @@ export default async function handler(req, res) {
             mapped.grundriss = `${origin}/api/media?id=${cache.grundriss}`;
         }
 
-        // 🔗 Features
+        // FEATURES
         const featureIds = (mapped.featureSlugs || [])
           .map((slug) => featureMap[slug])
           .filter(Boolean);
@@ -164,13 +193,13 @@ export default async function handler(req, res) {
         delete mapped.featureSlugs;
         mapped.features = featureIds;
 
-        // 🔐 Hash
+        // HASH
         const hash = createHash(mapped);
         mapped["sync-hash"] = hash;
 
         const existing = wfMap.get(mapped["fahrzeug-id"]);
 
-        // -------- UPDATE
+        /* ---------- UPDATE ---------- */
         if (existing) {
           if (existing.fieldData?.["sync-hash"] === hash) {
             skipped++;
@@ -182,36 +211,41 @@ export default async function handler(req, res) {
               `${WEBFLOW_BASE}/collections/${WEBFLOW_COLLECTION}/items/${existing.id}`,
               "PATCH",
               WEBFLOW_TOKEN,
-              { fieldData: mapped }
+              {
+                isDraft: false,
+                isArchived: false,
+                fieldData: mapped,
+              }
             );
 
-            await wf(
-              `${WEBFLOW_BASE}/collections/${WEBFLOW_COLLECTION}/items/${existing.id}/publish`,
-              "POST",
+            await publishItem(
+              WEBFLOW_COLLECTION,
               WEBFLOW_TOKEN,
-              { publishToDomains: ["staging"] }
+              existing.id
             );
           }
 
           updated++;
         }
-        // -------- CREATE
+
+        /* ---------- CREATE ---------- */
         else {
           if (!dryRun) {
             const createdItem = await wf(
               `${WEBFLOW_BASE}/collections/${WEBFLOW_COLLECTION}/items`,
               "POST",
               WEBFLOW_TOKEN,
-              { items: [{ fieldData: mapped }] }
+              {
+                isDraft: false,
+                isArchived: false,
+                fieldData: mapped,
+              }
             );
 
-            const newId = createdItem.items[0].id;
-
-            await wf(
-              `${WEBFLOW_BASE}/collections/${WEBFLOW_COLLECTION}/items/${newId}/publish`,
-              "POST",
+            await publishItem(
+              WEBFLOW_COLLECTION,
               WEBFLOW_TOKEN,
-              { publishToDomains: ["staging"] }
+              createdItem.id
             );
           }
 
@@ -225,9 +259,9 @@ export default async function handler(req, res) {
       }
     }
 
-    // ------------------------------------------------
-    // 5) DELETE
-    // ------------------------------------------------
+    /* ----------------------------------------------
+       DELETE
+    ---------------------------------------------- */
     for (const [fid, item] of wfMap.entries()) {
       if (!sysMap.has(fid)) {
         if (!dryRun) {
@@ -241,9 +275,9 @@ export default async function handler(req, res) {
       }
     }
 
-    // ------------------------------------------------
-    // 6) Ergebnis
-    // ------------------------------------------------
+    /* ----------------------------------------------
+       RESULT
+    ---------------------------------------------- */
     return res.status(200).json({
       ok: true,
       dryRun,
@@ -254,7 +288,7 @@ export default async function handler(req, res) {
       updated,
       skipped,
       deleted,
-      errors, // 🔥 extrem wichtig
+      errors,
     });
   } catch (err) {
     console.error(err);
