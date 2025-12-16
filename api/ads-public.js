@@ -4,60 +4,28 @@ export default async function handler(req, res) {
   try {
     const { SYS_API_USER, SYS_API_PASS } = process.env;
 
-    if (!SYS_API_USER || !SYS_API_PASS) {
-      return res.status(500).json({
-        error: "Missing SYS_API_USER or SYS_API_PASS",
-      });
-    }
-
     const auth = Buffer.from(
       `${SYS_API_USER}:${SYS_API_PASS}`
     ).toString("base64");
 
-    // ------------------------------------------------
-    // 1) Alle Ads laden (RAW)
-    // ------------------------------------------------
     const response = await fetch("https://api.syscara.com/sale/ads/", {
       headers: {
         Authorization: `Basic ${auth}`,
       },
     });
 
-    const text = await response.text();
-
-    if (!response.ok) {
-      return res.status(500).json({
-        error: "Syscara error",
-        status: response.status,
-        raw: text,
-      });
-    }
-
-    let data;
-    try {
-      data = JSON.parse(text);
-    } catch (e) {
-      return res.status(500).json({
-        error: "Invalid JSON from Syscara",
-        raw: text,
-      });
-    }
-
+    const data = await response.json();
     const ads = Object.values(data);
-    const total = ads.length;
 
-    // ------------------------------------------------
-    // 2) Filterlogik (wie Embed / Public)
-    // ------------------------------------------------
     const stats = {
-      total,
-      public: 0,
-      sale: 0,
-      rent: 0,
+      totalVehicles: ads.length,
+      publicVehicles: 0,
+      reisemobile: 0,
+      caravans: 0,
       excluded: 0,
       excludedReasons: {},
-      sampleExcluded: [],
       sampleIncluded: [],
+      sampleExcluded: [],
     };
 
     function exclude(reason, ad) {
@@ -68,19 +36,18 @@ export default async function handler(req, res) {
       if (stats.sampleExcluded.length < 10) {
         stats.sampleExcluded.push({
           id: ad.id,
-          category: ad.category,
-          status: ad.status,
           type: ad.type,
+          status: ad.status,
           reason,
         });
       }
     }
 
     function include(ad) {
-      stats.public++;
+      stats.publicVehicles++;
 
-      if (ad.category === "Sale") stats.sale++;
-      if (ad.category === "Rent") stats.rent++;
+      if (ad.type === "Reisemobil") stats.reisemobile++;
+      if (ad.type === "Caravan") stats.caravans++;
 
       if (stats.sampleIncluded.length < 10) {
         stats.sampleIncluded.push({
@@ -92,74 +59,32 @@ export default async function handler(req, res) {
           ]
             .filter(Boolean)
             .join(" "),
-          category: ad.category,
           type: ad.type,
         });
       }
     }
 
-    // ------------------------------------------------
-    // 3) Durch alle Ads iterieren
-    // ------------------------------------------------
     for (const ad of ads) {
-      // ❌ kein Fahrzeugtyp
-      if (!ad.type) {
-        exclude("missing_type", ad);
+      // ❌ nicht verfügbar
+      if (ad.status !== "BE") {
+        exclude("status_not_BE", ad);
         continue;
       }
 
-      // ❌ kein Reisemobil / Wohnwagen
-      if (!["Reisemobil", "Wohnwagen"].includes(ad.type)) {
+      // ❌ kein relevantes Fahrzeug
+      if (!["Reisemobil", "Caravan"].includes(ad.type)) {
         exclude("wrong_type", ad);
         continue;
       }
 
-      // ❌ keine Kategorie
-      if (!ad.category) {
-        exclude("missing_category", ad);
-        continue;
-      }
-
-      // ❌ nicht Verkauf oder Miete
-      if (!["Sale", "Rent"].includes(ad.category)) {
-        exclude("not_sale_or_rent", ad);
-        continue;
-      }
-
-      // ❌ inaktiv (falls vorhanden)
-      if (ad.status && ad.status !== "active") {
-        exclude("inactive_status", ad);
-        continue;
-      }
-
-      // ❌ explizit deaktiviert
-      if (ad.active === false) {
-        exclude("active_false", ad);
-        continue;
-      }
-
-      // ✅ öffentliches Fahrzeug
+      // ✅ öffentlich
       include(ad);
     }
 
-    // ------------------------------------------------
-    // 4) Ergebnis
-    // ------------------------------------------------
-    return res.status(200).json({
-      totalVehicles: stats.total,
-      publicVehicles: stats.public,
-      sale: stats.sale,
-      rent: stats.rent,
-      excluded: stats.excluded,
-      excludedReasons: stats.excludedReasons,
-      sampleIncluded: stats.sampleIncluded,
-      sampleExcluded: stats.sampleExcluded,
-    });
+    return res.status(200).json(stats);
   } catch (err) {
-    console.error(err);
     return res.status(500).json({
-      error: "Server error",
-      details: err.message,
+      error: err.message,
     });
   }
 }
