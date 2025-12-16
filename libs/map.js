@@ -117,7 +117,7 @@ export function mapVehicle(ad) {
   const heckgarage = hasFeature(features, "heckgarage");
 
   // ----------------------------------------------------
-  // 7) Media Cache (unverändert)
+  // 7) Media Cache (inkl. Grundriss)
   // ----------------------------------------------------
   const media = Array.isArray(ad.media) ? ad.media : [];
 
@@ -125,9 +125,14 @@ export function mapVehicle(ad) {
     .filter((m) => m && m.group === "image" && m.id != null)
     .map((m) => m.id);
 
+  const layoutImage = media.find(
+    (m) => m && m.group === "layout" && m.id != null
+  );
+
   const mediaCache = JSON.stringify({
     hauptbild: imageIds[0] || null,
     galerie: imageIds,
+    grundriss: layoutImage?.id || null,
   });
 
   // ----------------------------------------------------
@@ -185,4 +190,3 @@ export function mapVehicle(ad) {
     "media-cache": mediaCache,
   };
 }
-
