@@ -35,7 +35,7 @@ async function wf(url, method, token, body) {
 }
 
 /* ----------------------------------------------------
-   LIVE UNPUBLISH (Item aus Live entfernen)
+   LIVE UNPUBLISH
 ---------------------------------------------------- */
 async function unpublishLiveItem(collectionId, itemId, token) {
   return wf(
@@ -46,7 +46,7 @@ async function unpublishLiveItem(collectionId, itemId, token) {
 }
 
 /* ----------------------------------------------------
-   ORIGIN (für Media Proxy)
+   ORIGIN
 ---------------------------------------------------- */
 function getOrigin(req) {
   const proto = req.headers["x-forwarded-proto"] || "https";
@@ -55,7 +55,7 @@ function getOrigin(req) {
 }
 
 /* ----------------------------------------------------
-   FEATURE MAP (slug → id)
+   FEATURE MAP
 ---------------------------------------------------- */
 async function getFeatureMap(token, collectionId) {
   if (featureMapCache) return featureMapCache;
@@ -85,7 +85,7 @@ async function getFeatureMap(token, collectionId) {
 }
 
 /* ----------------------------------------------------
-   PUBLISH (V2, STAGING)
+   PUBLISH
 ---------------------------------------------------- */
 async function publishItem(collectionId, token, itemId) {
   return wf(
@@ -112,7 +112,7 @@ export default async function handler(req, res) {
     const dryRun = req.query.dry === "1";
 
     /* ----------------------------------------------
-       SYSCARA FETCH
+       SYSCARA
     ---------------------------------------------- */
     const auth =
       "Basic " +
@@ -124,8 +124,7 @@ export default async function handler(req, res) {
 
     if (!sysRes.ok) throw await sysRes.text();
 
-    const sysRaw = await sysRes.json();
-    const sysAds = Object.values(sysRaw);
+    const sysAds = Object.values(await sysRes.json());
 
     const sysMap = new Map();
     for (const ad of sysAds) {
@@ -154,9 +153,6 @@ export default async function handler(req, res) {
       wfOffset += 100;
     }
 
-    /* ----------------------------------------------
-       FEATURE MAP
-    ---------------------------------------------- */
     const featureMap = await getFeatureMap(
       WEBFLOW_TOKEN,
       WEBFLOW_FEATURES_COLLECTION
@@ -177,10 +173,7 @@ export default async function handler(req, res) {
       try {
         const mapped = mapVehicle(ad);
 
-        /* ------------------------------------------
-           🚗 NEUWAGEN-FIX
-           Keine Erstzulassung + keine km → km = 0
-        ------------------------------------------ */
+        /* 🚗 NEUWAGEN-FIX (STRING!) */
         const hasErstzulassung =
           mapped.erstzulassung &&
           String(mapped.erstzulassung).trim() !== "";
@@ -194,10 +187,8 @@ export default async function handler(req, res) {
           Number.isFinite(kmParsed) && kmParsed > 0;
 
         if (!hasErstzulassung && !hasValidKm) {
-          mapped.kilometer = 0;
+          mapped.kilometer = "0"; // ✅ STRING, nicht number
         }
-
-        /* ------------------------------------------ */
 
         if (mapped["media-cache"]) {
           const cache = JSON.parse(mapped["media-cache"]);
@@ -272,7 +263,7 @@ export default async function handler(req, res) {
     }
 
     /* ----------------------------------------------
-       DELETE (Live-Unpublish → CMS-Delete)
+       DELETE
     ---------------------------------------------- */
     for (const [fid, item] of wfMap.entries()) {
       if (!sysMap.has(fid)) {
@@ -297,9 +288,6 @@ export default async function handler(req, res) {
       }
     }
 
-    /* ----------------------------------------------
-       RESULT
-    ---------------------------------------------- */
     return res.status(200).json({
       ok: true,
       dryRun,
