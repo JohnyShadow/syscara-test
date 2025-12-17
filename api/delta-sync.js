@@ -177,6 +177,28 @@ export default async function handler(req, res) {
       try {
         const mapped = mapVehicle(ad);
 
+        /* ------------------------------------------
+           🚗 NEUWAGEN-FIX
+           Keine Erstzulassung + keine km → km = 0
+        ------------------------------------------ */
+        const hasErstzulassung =
+          mapped.erstzulassung &&
+          String(mapped.erstzulassung).trim() !== "";
+
+        const kmParsed =
+          typeof mapped.kilometer === "number"
+            ? mapped.kilometer
+            : parseInt(mapped.kilometer, 10);
+
+        const hasValidKm =
+          Number.isFinite(kmParsed) && kmParsed > 0;
+
+        if (!hasErstzulassung && !hasValidKm) {
+          mapped.kilometer = 0;
+        }
+
+        /* ------------------------------------------ */
+
         if (mapped["media-cache"]) {
           const cache = JSON.parse(mapped["media-cache"]);
 
@@ -256,14 +278,12 @@ export default async function handler(req, res) {
       if (!sysMap.has(fid)) {
         try {
           if (!dryRun) {
-            // 1) sofort von Live entfernen
             await unpublishLiveItem(
               WEBFLOW_COLLECTION,
               item.id,
               WEBFLOW_TOKEN
             );
 
-            // 2) danach endgültig löschen
             await wf(
               `${WEBFLOW_BASE}/collections/${WEBFLOW_COLLECTION}/items/${item.id}`,
               "DELETE",
