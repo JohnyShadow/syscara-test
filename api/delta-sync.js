@@ -1,14 +1,41 @@
 // pages/api/delta-sync.js
 import { mapVehicle } from "../libs/map.js";
 import crypto from "crypto";
-import { Redis } from "@upstash/redis";
 
 const WEBFLOW_BASE = "https://api.webflow.com/v2";
 const OFFSET_KEY = "delta-sync-offset";
 let featureMapCache = null;
 
-// Redis (Upstash)
-const redis = Redis.fromEnv();
+/* ----------------------------------------------------
+   REDIS (Upstash REST – KEIN SDK!)
+---------------------------------------------------- */
+async function redisGet(key) {
+  const res = await fetch(
+    `${process.env.KV_REST_API_URL}/get/${key}`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.KV_REST_API_TOKEN}`,
+      },
+    }
+  );
+  const json = await res.json();
+  return json.result;
+}
+
+async function redisSet(key, value) {
+  await fetch(
+    `${process.env.KV_REST_API_URL}/set/${key}`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.KV_REST_API_TOKEN}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(value),
+    }
+  );
+}
 
 /* ----------------------------------------------------
    HASH
@@ -57,7 +84,7 @@ function getOrigin(req) {
 }
 
 /* ----------------------------------------------------
-   FEATURE MAP
+   FEATURE MAP (slug → id)
 ---------------------------------------------------- */
 async function getFeatureMap(token, collectionId) {
   if (featureMapCache) return featureMapCache;
@@ -86,7 +113,7 @@ async function getFeatureMap(token, collectionId) {
 }
 
 /* ----------------------------------------------------
-   PUBLISH
+   PUBLISH (STAGING)
 ---------------------------------------------------- */
 async function publishItem(collectionId, token, itemId) {
   return wf(
@@ -117,7 +144,7 @@ export default async function handler(req, res) {
     /* ----------------------------------------------
        OFFSET AUS REDIS
     ---------------------------------------------- */
-    let offset = (await redis.get(OFFSET_KEY)) || 0;
+    let offset = (await redisGet(OFFSET_KEY)) || 0;
 
     /* ----------------------------------------------
        SYSCARA
@@ -173,18 +200,16 @@ export default async function handler(req, res) {
       try {
         const mapped = mapVehicle(ad);
 
-        // 🚗 Neuwagen: km = "0"
+        // 🚗 Neuwagen → Kilometer = "0" (STRING!)
         const hasErstzulassung =
           mapped.erstzulassung &&
           String(mapped.erstzulassung).trim() !== "";
 
-        const kmParsed =
-          typeof mapped.kilometer === "number"
-            ? mapped.kilometer
-            : parseInt(mapped.kilometer, 10);
-
+        const kmParsed = parseInt(mapped.kilometer, 10);
         if (!hasErstzulassung && !Number.isFinite(kmParsed)) {
           mapped.kilometer = "0";
+        } else if (Number.isFinite(kmParsed)) {
+          mapped.kilometer = String(kmParsed);
         }
 
         // 🖼️ MEDIA
@@ -250,12 +275,12 @@ export default async function handler(req, res) {
           created++;
         }
       } catch (e) {
-        errors.push({ syscaraId: ad?.id, error: e });
+        errors.push({ syscaraId: ad?.id || null, error: e });
       }
     }
 
     /* ----------------------------------------------
-       DELETE
+       DELETE (Live → Delete)
     ---------------------------------------------- */
     for (const [fid, item] of wfMap.entries()) {
       if (!sysMap.has(fid)) {
@@ -276,13 +301,13 @@ export default async function handler(req, res) {
     }
 
     /* ----------------------------------------------
-       OFFSET AKTUALISIEREN
+       OFFSET SPEICHERN
     ---------------------------------------------- */
     const nextOffset =
       offset + limit >= sysAds.length ? 0 : offset + limit;
 
     if (!dryRun) {
-      await redis.set(OFFSET_KEY, nextOffset);
+      await redisSet(OFFSET_KEY, nextOffset);
     }
 
     return res.status(200).json({
@@ -305,3 +330,4 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: err });
   }
 }
+
