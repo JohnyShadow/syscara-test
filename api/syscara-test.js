@@ -48,14 +48,21 @@ export default async function handler(req, res) {
     const entries = Object.entries(ads);
 
     // ------------------------------------------------
-    // 2) JEDES Fahrzeug mappen (ohne Webflow!)
+    // 2) FILTER: NUR Standort Osterrönfeld (PLZ 24783)
+    // ------------------------------------------------
+    const filteredEntries = entries.filter(
+      ([, ad]) => ad?.store?.zipcode === "24783"
+    );
+
+    // ------------------------------------------------
+    // 3) Fahrzeuge mappen (ohne Webflow)
     // ------------------------------------------------
     const results = [];
     let unknownNameCount = 0;
     let missingIdCount = 0;
     let noImagesCount = 0;
 
-    for (const [id, ad] of entries) {
+    for (const [id, ad] of filteredEntries) {
       const mapped = mapVehicle(ad);
 
       if (!mapped.name || mapped.name.includes("unbekannt")) {
@@ -82,14 +89,17 @@ export default async function handler(req, res) {
         name: mapped.name,
         slug: mapped.slug,
         images: imageCount,
+        zipcode: ad.store?.zipcode,
+        city: ad.store?.city,
       });
     }
 
     // ------------------------------------------------
-    // 3) Saubere Test-Ausgabe
+    // 4) Ausgabe
     // ------------------------------------------------
     return res.status(200).json({
-      totalVehicles: entries.length,
+      totalVehiclesSyscara: entries.length,
+      vehiclesZip24783: filteredEntries.length,
       mappedVehicles: results.length,
       unknownNames: unknownNameCount,
       missingIds: missingIdCount,
@@ -104,3 +114,4 @@ export default async function handler(req, res) {
     });
   }
 }
+
