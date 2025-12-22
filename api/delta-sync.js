@@ -197,10 +197,16 @@ export default async function handler(req, res) {
         .map((s) => featureMap[s])
         .filter(Boolean);
 
-      // BETTARTEN → IDs
-      mapped.bettarten = (mapped.bettartenSlugs || [])
-        .map((s) => bettartenMap[s])
-        .filter(Boolean);
+      const bettartenIds = (mapped.bettartenSlugs || [])
+  .map((s) => bettartenMap[s])
+  .filter(Boolean);
+
+if (bettartenIds.length > 0) {
+  mapped.bettarten = bettartenIds;
+}
+
+delete mapped.bettartenSlugs;
+
 
       delete mapped.featureSlugs;
       delete mapped.bettartenSlugs;
