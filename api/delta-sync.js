@@ -4,15 +4,23 @@ import crypto from "crypto";
 
 const WEBFLOW_BASE = "https://api.webflow.com/v2";
 const OFFSET_KEY = "delta-sync-offset";
-let featureMapCache = null;
-let bedMapCache = null;
 
-/* ---------------- HASH ---------------- */
+let featureMapCache = null;
+let bedTypeMapCache = null;
+
+/* ----------------------------------------------------
+   HASH
+---------------------------------------------------- */
 function createHash(obj) {
-  return crypto.createHash("sha1").update(JSON.stringify(obj)).digest("hex");
+  return crypto
+    .createHash("sha1")
+    .update(JSON.stringify(obj))
+    .digest("hex");
 }
 
-/* ---------------- WEBFLOW REQUEST ---------------- */
+/* ----------------------------------------------------
+   WEBFLOW REQUEST
+---------------------------------------------------- */
 async function wf(url, method, token, body) {
   const res = await fetch(url, {
     method,
@@ -29,8 +37,19 @@ async function wf(url, method, token, body) {
   return json;
 }
 
-/* ---------------- FEATURE / BED MAP ---------------- */
-async function getMap(token, collectionId, cacheRef) {
+/* ----------------------------------------------------
+   ORIGIN
+---------------------------------------------------- */
+function getOrigin(req) {
+  const proto = req.headers["x-forwarded-proto"] || "https";
+  const host = req.headers["x-forwarded-host"] || req.headers.host;
+  return `${proto}://${host}`;
+}
+
+/* ----------------------------------------------------
+   GENERIC MAP (slug → ID)
+---------------------------------------------------- */
+async function loadSlugMap(token, collectionId, cacheRef) {
   if (cacheRef.value) return cacheRef.value;
 
   const map = {};
@@ -56,22 +75,27 @@ async function getMap(token, collectionId, cacheRef) {
   return map;
 }
 
-/* ---------------- API HANDLER ---------------- */
+/* ----------------------------------------------------
+   API HANDLER
+---------------------------------------------------- */
 export default async function handler(req, res) {
   try {
     const {
       WEBFLOW_TOKEN,
       WEBFLOW_COLLECTION,
       WEBFLOW_FEATURES_COLLECTION,
-      WEBFLOW_BEDS_COLLECTION,
+      WEBFLOW_BEDTYPES_COLLECTION,
       SYS_API_USER,
       SYS_API_PASS,
     } = process.env;
 
     const limit = Math.min(parseInt(req.query.limit || "25", 10), 25);
     const dryRun = req.query.dry === "1";
+    const origin = getOrigin(req);
 
-    // ---------------- SYSCARA ----------------
+    /* ----------------------------------------------
+       SYSCARA
+    ---------------------------------------------- */
     const auth =
       "Basic " +
       Buffer.from(`${SYS_API_USER}:${SYS_API_PASS}`).toString("base64");
@@ -81,13 +105,19 @@ export default async function handler(req, res) {
     });
     if (!sysRes.ok) throw await sysRes.text();
 
-    const sysAds = Object.values(await sysRes.json())
-      .filter((ad) => ad?.store?.zipcode === "24783");
+    const sysAdsAll = Object.values(await sysRes.json());
+
+    // ✅ NUR OSTERRÖNFELD
+    const sysAds = sysAdsAll.filter(
+      (ad) => ad?.store?.zipcode === "24783"
+    );
 
     const batch = sysAds.slice(0, limit);
     const sysMap = new Map(sysAds.map((a) => [String(a.id), a]));
 
-    // ---------------- WEBFLOW ITEMS ----------------
+    /* ----------------------------------------------
+       WEBFLOW ITEMS
+    ---------------------------------------------- */
     const wfMap = new Map();
     let wfOffset = 0;
 
@@ -107,69 +137,95 @@ export default async function handler(req, res) {
       wfOffset += 100;
     }
 
-    // ---------------- MAPS ----------------
-    const featureMap = await getMap(
+    /* ----------------------------------------------
+       MAPS
+    ---------------------------------------------- */
+    const featureMap = await loadSlugMap(
       WEBFLOW_TOKEN,
       WEBFLOW_FEATURES_COLLECTION,
       { value: featureMapCache }
     );
 
-    const bedMap = await getMap(
+    const bedTypeMap = await loadSlugMap(
       WEBFLOW_TOKEN,
-      WEBFLOW_BEDS_COLLECTION,
-      { value: bedMapCache }
+      WEBFLOW_BEDTYPES_COLLECTION,
+      { value: bedTypeMapCache }
     );
 
     let created = 0;
     let updated = 0;
     let skipped = 0;
+    const errors = [];
 
-    // ---------------- SYNC ----------------
+    /* ----------------------------------------------
+       CREATE / UPDATE
+    ---------------------------------------------- */
     for (const ad of batch) {
-      const mapped = mapVehicle(ad);
+      try {
+        const mapped = mapVehicle(ad);
 
-      // FEATURES
-      mapped.features = (mapped.featureSlugs || [])
-        .map((s) => featureMap[s])
-        .filter(Boolean);
-      delete mapped.featureSlugs;
+        // MEDIA
+        if (mapped["media-cache"]) {
+          const cache = JSON.parse(mapped["media-cache"]);
 
-      // BETTEN ✅
-      mapped.betten = (mapped.bedSlugs || [])
-        .map((s) => bedMap[s])
-        .filter(Boolean);
-      delete mapped.bedSlugs;
+          if (cache.hauptbild)
+            mapped.hauptbild = `${origin}/api/media?id=${cache.hauptbild}`;
 
-      const hash = createHash(mapped);
-      mapped["sync-hash"] = hash;
+          if (Array.isArray(cache.galerie))
+            mapped.galerie = cache.galerie
+              .slice(0, 25)
+              .map((id) => `${origin}/api/media?id=${id}`);
 
-      const existing = wfMap.get(mapped["fahrzeug-id"]);
-
-      if (existing) {
-        if (existing.fieldData?.["sync-hash"] === hash) {
-          skipped++;
-          continue;
+          if (cache.grundriss)
+            mapped.grundriss = `${origin}/api/media?id=${cache.grundriss}`;
         }
 
-        if (!dryRun) {
-          await wf(
-            `${WEBFLOW_BASE}/collections/${WEBFLOW_COLLECTION}/items/${existing.id}`,
-            "PATCH",
-            WEBFLOW_TOKEN,
-            { fieldData: mapped, isDraft: false }
-          );
+        // FEATURES
+        mapped.features = (mapped.featureSlugs || [])
+          .map((s) => featureMap[s])
+          .filter(Boolean);
+        delete mapped.featureSlugs;
+
+        // BETTARTEN ✅
+        mapped.bettarten = (mapped.bettartenSlugs || [])
+          .map((s) => bedTypeMap[s])
+          .filter(Boolean);
+        delete mapped.bettartenSlugs;
+
+        const hash = createHash(mapped);
+        mapped["sync-hash"] = hash;
+
+        const existing = wfMap.get(mapped["fahrzeug-id"]);
+
+        if (existing) {
+          if (existing.fieldData?.["sync-hash"] === hash) {
+            skipped++;
+            continue;
+          }
+
+          if (!dryRun) {
+            await wf(
+              `${WEBFLOW_BASE}/collections/${WEBFLOW_COLLECTION}/items/${existing.id}`,
+              "PATCH",
+              WEBFLOW_TOKEN,
+              { isDraft: false, isArchived: false, fieldData: mapped }
+            );
+          }
+
+          updated++;
+        } else {
+          if (!dryRun) {
+            await wf(
+              `${WEBFLOW_BASE}/collections/${WEBFLOW_COLLECTION}/items`,
+              "POST",
+              WEBFLOW_TOKEN,
+              { isDraft: false, isArchived: false, fieldData: mapped }
+            );
+          }
+          created++;
         }
-        updated++;
-      } else {
-        if (!dryRun) {
-          await wf(
-            `${WEBFLOW_BASE}/collections/${WEBFLOW_COLLECTION}/items`,
-            "POST",
-            WEBFLOW_TOKEN,
-            { fieldData: mapped, isDraft: false }
-          );
-        }
-        created++;
+      } catch (e) {
+        errors.push({ syscaraId: ad?.id, error: String(e) });
       }
     }
 
@@ -178,7 +234,7 @@ export default async function handler(req, res) {
       created,
       updated,
       skipped,
-      totalProcessed: batch.length,
+      errors,
     });
   } catch (err) {
     console.error(err);
