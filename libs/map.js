@@ -1,5 +1,4 @@
 // libs/map.js
-
 function slugify(str) {
   return String(str)
     .toLowerCase()
@@ -21,7 +20,7 @@ export function mapVehicle(ad) {
   const producer = ad.model?.producer || "";
   const series = ad.model?.series || "";
   const model = ad.model?.model || "";
-  const modelAdd = ad.model?.model_add || "";
+  const modelAdd = ad.model?.model_add || ""; // ✅
 
   const name =
     [producer, series, model].filter(Boolean).join(" ") ||
@@ -35,39 +34,33 @@ export function mapVehicle(ad) {
   const zustand = ad.condition || "";
   const fahrzeugart = ad.type || "";
   const fahrzeugtyp = ad.typeof || "";
-
   const baujahr = ad.model?.modelyear ? String(ad.model.modelyear) : "";
-
-  const kilometer =
-    ad.mileage != null && ad.mileage !== 0 ? String(ad.mileage) : "";
-
+  const kilometer = ad.mileage != null && ad.mileage !== 0 ? String(ad.mileage) : "";
   const preis = ad.prices?.offer != null ? String(ad.prices.offer) : "";
 
   // ------------------------------------------------
   // 4) Maße & Gewichte
   // ------------------------------------------------
-  const breite = ad.dimensions?.width != null ? String(ad.dimensions.width) : "";
-  const hoehe = ad.dimensions?.height != null ? String(ad.dimensions.height) : "";
-  const laenge = ad.dimensions?.length != null ? String(ad.dimensions.length) : "";
-  const gesamtmasse = ad.weights?.total != null ? String(ad.weights.total) : "";
+  const breite = ad.dimensions?.width ? String(ad.dimensions.width) : "";
+  const hoehe = ad.dimensions?.height ? String(ad.dimensions.height) : "";
+  const laenge = ad.dimensions?.length ? String(ad.dimensions.length) : "";
+  const gesamtmasse = ad.weights?.total ? String(ad.weights.total) : "";
 
   // ------------------------------------------------
   // 5) Zulassung / Innenraum
   // ------------------------------------------------
   const erstzulassung = ad.date?.registration || "";
+  const schlafplatz = ad.beds?.num ? String(ad.beds.num) : "";
 
-  const schlafplatz = ad.beds?.num != null ? String(ad.beds.num) : "";
-
-  // ✅ Bettarten als Slugs (z.B. KINGSIZE_BED -> kingsize-bed)
-  const bettartenSlugs = Array.isArray(ad.beds?.beds)
-    ? ad.beds.beds
-        .map((b) => b?.type)
-        .filter(Boolean)
-        .map((t) => String(t).toLowerCase().replace(/_/g, "-"))
-    : [];
+  // ✅ Bettarten (nur Slugs, keine Übersetzung, kein Textfeld "bett")
+  const bedEntries = Array.isArray(ad.beds?.beds) ? ad.beds.beds : [];
+  const bettartenSlugs = bedEntries
+    .map((b) => b?.type)
+    .filter(Boolean)
+    .map((type) => String(type).toLowerCase().replace(/_/g, "-"));
 
   const sitzgruppe = Array.isArray(ad.seating?.seatings)
-    ? ad.seating.seatings.map((s) => s.type).filter(Boolean).join(", ")
+    ? ad.seating.seatings.map((s) => s.type).join(", ")
     : "";
 
   // ------------------------------------------------
@@ -94,7 +87,7 @@ export function mapVehicle(ad) {
   const geraetId = ad.identifier?.internal ? String(ad.identifier.internal) : "";
 
   // ------------------------------------------------
-  // 10) Features → SLUGS (wie gehabt)
+  // 10) Features → SLUGS
   // ------------------------------------------------
   const features = Array.isArray(ad.features) ? ad.features : [];
   const featureSlugs = features.map((f) =>
@@ -105,7 +98,6 @@ export function mapVehicle(ad) {
   // 11) Media-Cache
   // ------------------------------------------------
   const media = Array.isArray(ad.media) ? ad.media : [];
-
   const images = media.filter((m) => m && m.group === "image" && m.id);
   const grundriss = media.find((m) => m && m.group === "layout")?.id || null;
 
@@ -121,17 +113,17 @@ export function mapVehicle(ad) {
   return {
     name,
     slug,
+
     "fahrzeug-id": vehicleId,
 
     hersteller: producer,
     serie: series,
     modell: model,
-    "modell-zusatz": modelAdd,
+    "modell-zusatz": modelAdd, // ✅
 
     fahrzeugart,
     fahrzeugtyp,
     zustand,
-
     baujahr,
     kilometer,
     preis,
@@ -151,13 +143,13 @@ export function mapVehicle(ad) {
     getriebe,
 
     beschreibung,
-
     "geraet-id": geraetId,
     "verkauf-miete": verkaufMiete,
 
     featureSlugs,
-    bettartenSlugs, // ✅ NEU (nur intern für delta-sync)
+    bettartenSlugs, // ✅ NEU (Multi-Reference wird in delta-sync gemappt)
 
     "media-cache": mediaCache,
   };
 }
+
