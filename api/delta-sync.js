@@ -1,5 +1,5 @@
 // pages/api/delta-sync.js
-import { mapVehicle } from "../libs/map.js";
+import mapVehicle from "../libs/map.js";
 import crypto from "crypto";
 
 const WEBFLOW_BASE = "https://api.webflow.com/v2";
