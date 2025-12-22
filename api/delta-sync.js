@@ -6,10 +6,9 @@ const WEBFLOW_BASE = "https://api.webflow.com/v2";
 const OFFSET_KEY = "delta-sync-offset";
 
 let featureMapCache = null;
+let bettartenMapCache = null;
 
-/* ----------------------------------------------------
-   REDIS (Upstash REST – ohne SDK)
----------------------------------------------------- */
+/* ---------------- REDIS ---------------- */
 async function redisGet(key) {
   const res = await fetch(
     `${process.env.KV_REST_API_URL}/get/${key}`,
@@ -38,9 +37,7 @@ async function redisSet(key, value) {
   );
 }
 
-/* ----------------------------------------------------
-   HASH
----------------------------------------------------- */
+/* ---------------- HASH ---------------- */
 function createHash(obj) {
   return crypto
     .createHash("sha1")
@@ -48,9 +45,7 @@ function createHash(obj) {
     .digest("hex");
 }
 
-/* ----------------------------------------------------
-   WEBFLOW REQUEST
----------------------------------------------------- */
+/* ---------------- WEBFLOW ---------------- */
 async function wf(url, method, token, body) {
   const res = await fetch(url, {
     method,
@@ -67,114 +62,77 @@ async function wf(url, method, token, body) {
   return json;
 }
 
-/* ----------------------------------------------------
-   UNPUBLISH LIVE ITEM
----------------------------------------------------- */
-async function unpublishLiveItem(collectionId, itemId, token) {
-  return wf(
-    `${WEBFLOW_BASE}/collections/${collectionId}/items/${itemId}/live`,
-    "DELETE",
-    token
-  );
-}
-
-/* ----------------------------------------------------
-   PUBLISH (STAGING)
----------------------------------------------------- */
-async function publishItem(collectionId, token, itemId) {
-  return wf(
-    `${WEBFLOW_BASE}/collections/${collectionId}/items/publish`,
-    "POST",
-    token,
-    { itemIds: [itemId] }
-  );
-}
-
-/* ----------------------------------------------------
-   ORIGIN (Media Proxy)
----------------------------------------------------- */
-function getOrigin(req) {
-  const proto = req.headers["x-forwarded-proto"] || "https";
-  const host = req.headers["x-forwarded-host"] || req.headers.host;
-  return `${proto}://${host}`;
-}
-
-/* ----------------------------------------------------
-   FEATURE MAP (slug → ID)
----------------------------------------------------- */
-async function getFeatureMap(token, collectionId) {
-  if (featureMapCache) return featureMapCache;
-
+/* ---------------- MAP LOADER ---------------- */
+async function loadSlugMap(token, collectionId) {
   const map = {};
   let offset = 0;
 
   while (true) {
-    const res = await wf(
+    const r = await wf(
       `${WEBFLOW_BASE}/collections/${collectionId}/items?limit=100&offset=${offset}`,
       "GET",
       token
     );
 
-    for (const item of res.items || []) {
+    for (const item of r.items || []) {
       const slug = item.fieldData?.slug;
       if (slug) map[slug] = item.id;
     }
 
-    if (!res.items || res.items.length < 100) break;
+    if (!r.items || r.items.length < 100) break;
     offset += 100;
   }
 
-  featureMapCache = map;
   return map;
 }
 
-/* ----------------------------------------------------
-   API HANDLER
----------------------------------------------------- */
+async function getFeatureMap(token, cid) {
+  if (!featureMapCache)
+    featureMapCache = await loadSlugMap(token, cid);
+  return featureMapCache;
+}
+
+async function getBettartenMap(token, cid) {
+  if (!bettartenMapCache)
+    bettartenMapCache = await loadSlugMap(token, cid);
+  return bettartenMapCache;
+}
+
+/* ---------------- HANDLER ---------------- */
 export default async function handler(req, res) {
   try {
     const {
       WEBFLOW_TOKEN,
       WEBFLOW_COLLECTION,
       WEBFLOW_FEATURES_COLLECTION,
+      WEBFLOW_BETTARTEN_COLLECTION,
       SYS_API_USER,
       SYS_API_PASS,
     } = process.env;
 
-    const limit = Math.min(parseInt(req.query.limit || "25", 10), 25);
+    const limit = Math.min(Number(req.query.limit || 25), 25);
     const dryRun = req.query.dry === "1";
-    const origin = getOrigin(req);
 
-    /* ----------------------------------------------
-       OFFSET
-    ---------------------------------------------- */
     let offset = (await redisGet(OFFSET_KEY)) || 0;
 
-    /* ----------------------------------------------
-       SYSCARA – LOAD + FILTER (PLZ 24783)
-    ---------------------------------------------- */
     const auth =
       "Basic " +
       Buffer.from(`${SYS_API_USER}:${SYS_API_PASS}`).toString("base64");
 
-    const sysRes = await fetch("https://api.syscara.com/sale/ads/", {
-      headers: { Authorization: auth },
-    });
+    const sysRes = await fetch(
+      "https://api.syscara.com/sale/ads/",
+      { headers: { Authorization: auth } }
+    );
     if (!sysRes.ok) throw await sysRes.text();
 
     const sysAdsAll = Object.values(await sysRes.json());
-
-    // ✅ NUR OSTERRÖNFELD
     const sysAds = sysAdsAll.filter(
-      (ad) => ad?.store?.zipcode === "24783"
+      (a) => a?.store?.zipcode === "24783"
     );
 
     const batch = sysAds.slice(offset, offset + limit);
     const sysMap = new Map(sysAds.map((a) => [String(a.id), a]));
 
-    /* ----------------------------------------------
-       WEBFLOW ITEMS
-    ---------------------------------------------- */
     const wfMap = new Map();
     let wfOffset = 0;
 
@@ -184,12 +142,10 @@ export default async function handler(req, res) {
         "GET",
         WEBFLOW_TOKEN
       );
-
       for (const item of r.items || []) {
         const fid = item.fieldData?.["fahrzeug-id"];
         if (fid) wfMap.set(String(fid), item);
       }
-
       if (!r.items || r.items.length < 100) break;
       wfOffset += 100;
     }
@@ -198,119 +154,64 @@ export default async function handler(req, res) {
       WEBFLOW_TOKEN,
       WEBFLOW_FEATURES_COLLECTION
     );
+    const bettartenMap = await getBettartenMap(
+      WEBFLOW_TOKEN,
+      WEBFLOW_BETTARTEN_COLLECTION
+    );
 
-    let created = 0;
-    let updated = 0;
-    let skipped = 0;
-    let deleted = 0;
-    const errors = [];
+    let created = 0,
+      updated = 0,
+      skipped = 0,
+      deleted = 0;
 
-    /* ----------------------------------------------
-       CREATE / UPDATE
-    ---------------------------------------------- */
     for (const ad of batch) {
-      try {
-        const mapped = mapVehicle(ad);
+      const mapped = mapVehicle(ad);
 
-        // Kilometer Fix
-        const km = parseInt(mapped.kilometer, 10);
-        mapped.kilometer = Number.isFinite(km) ? String(km) : "0";
+      mapped.features = (mapped.featureSlugs || [])
+        .map((s) => featureMap[s])
+        .filter(Boolean);
 
-        // MEDIA
-        if (mapped["media-cache"]) {
-          const cache = JSON.parse(mapped["media-cache"]);
+      mapped.bettarten = (mapped.bettartenSlugs || [])
+        .map((s) => bettartenMap[s])
+        .filter(Boolean);
 
-          if (cache.hauptbild)
-            mapped.hauptbild = `${origin}/api/media?id=${cache.hauptbild}`;
+      delete mapped.featureSlugs;
+      delete mapped.bettartenSlugs;
 
-          if (Array.isArray(cache.galerie)) {
-            mapped.galerie = cache.galerie
-              .slice(0, 25)
-              .map((id) => `${origin}/api/media?id=${id}`);
-          }
+      mapped["sync-hash"] = createHash(mapped);
 
-          if (cache.grundriss)
-            mapped.grundriss = `${origin}/api/media?id=${cache.grundriss}`;
+      const existing = wfMap.get(mapped["fahrzeug-id"]);
+
+      if (existing) {
+        if (existing.fieldData?.["sync-hash"] === mapped["sync-hash"]) {
+          skipped++;
+          continue;
         }
-
-        // FEATURES
-        const featureIds = (mapped.featureSlugs || [])
-          .map((s) => featureMap[s])
-          .filter(Boolean);
-
-        delete mapped.featureSlugs;
-        mapped.features = featureIds;
-
-        const hash = createHash(mapped);
-        mapped["sync-hash"] = hash;
-
-        const existing = wfMap.get(mapped["fahrzeug-id"]);
-
-        if (existing) {
-          if (existing.fieldData?.["sync-hash"] === hash) {
-            skipped++;
-            continue;
-          }
-
-          if (!dryRun) {
-            await wf(
-              `${WEBFLOW_BASE}/collections/${WEBFLOW_COLLECTION}/items/${existing.id}`,
-              "PATCH",
-              WEBFLOW_TOKEN,
-              {
-                isDraft: false,
-                isArchived: false,
-                fieldData: mapped,
-              }
-            );
-            await publishItem(
-              WEBFLOW_COLLECTION,
-              WEBFLOW_TOKEN,
-              existing.id
-            );
-          }
-
-          updated++;
-        } else {
-          if (!dryRun) {
-            const createdItem = await wf(
-              `${WEBFLOW_BASE}/collections/${WEBFLOW_COLLECTION}/items`,
-              "POST",
-              WEBFLOW_TOKEN,
-              {
-                isDraft: false,
-                isArchived: false,
-                fieldData: mapped,
-              }
-            );
-            await publishItem(
-              WEBFLOW_COLLECTION,
-              WEBFLOW_TOKEN,
-              createdItem.id
-            );
-          }
-
-          created++;
+        if (!dryRun) {
+          await wf(
+            `${WEBFLOW_BASE}/collections/${WEBFLOW_COLLECTION}/items/${existing.id}`,
+            "PATCH",
+            WEBFLOW_TOKEN,
+            { isDraft: false, isArchived: false, fieldData: mapped }
+          );
         }
-      } catch (e) {
-        errors.push({
-          syscaraId: ad?.id || null,
-          error: String(e),
-        });
+        updated++;
+      } else {
+        if (!dryRun) {
+          await wf(
+            `${WEBFLOW_BASE}/collections/${WEBFLOW_COLLECTION}/items`,
+            "POST",
+            WEBFLOW_TOKEN,
+            { isDraft: false, isArchived: false, fieldData: mapped }
+          );
+        }
+        created++;
       }
     }
 
-    /* ----------------------------------------------
-       DELETE (nicht mehr PLZ 24783 oder entfernt)
-    ---------------------------------------------- */
     for (const [fid, item] of wfMap.entries()) {
       if (!sysMap.has(fid)) {
         if (!dryRun) {
-          await unpublishLiveItem(
-            WEBFLOW_COLLECTION,
-            item.id,
-            WEBFLOW_TOKEN
-          );
           await wf(
             `${WEBFLOW_BASE}/collections/${WEBFLOW_COLLECTION}/items/${item.id}`,
             "DELETE",
@@ -321,33 +222,19 @@ export default async function handler(req, res) {
       }
     }
 
-    /* ----------------------------------------------
-       OFFSET UPDATE
-    ---------------------------------------------- */
     const nextOffset =
       offset + limit >= sysAds.length ? 0 : offset + limit;
+    if (!dryRun) await redisSet(OFFSET_KEY, nextOffset);
 
-    if (!dryRun) {
-      await redisSet(OFFSET_KEY, nextOffset);
-    }
-
-    return res.status(200).json({
+    res.json({
       ok: true,
-      limit,
-      offset,
-      nextOffset,
-      totals: {
-        syscaraFiltered: sysAds.length,
-        webflow: wfMap.size,
-      },
       created,
       updated,
       skipped,
       deleted,
-      errors,
     });
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json({ error: String(err) });
+  } catch (e) {
+    res.status(500).json({ error: String(e) });
   }
 }
+
