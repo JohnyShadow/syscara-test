@@ -9,13 +9,36 @@ let featureMapCache = null;
 let bedTypeMapCache = null;
 
 /* ----------------------------------------------------
+   REDIS (Upstash REST – ohne SDK)
+---------------------------------------------------- */
+async function redisGet(key) {
+  const res = await fetch(`${process.env.KV_REST_API_URL}/get/${key}`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${process.env.KV_REST_API_TOKEN}`,
+    },
+  });
+
+  const json = await res.json();
+  return json.result === null ? null : Number(json.result);
+}
+
+async function redisSet(key, value) {
+  await fetch(`${process.env.KV_REST_API_URL}/set/${key}`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${process.env.KV_REST_API_TOKEN}`,
+      "Content-Type": "text/plain",
+    },
+    body: String(value),
+  });
+}
+
+/* ----------------------------------------------------
    HASH
 ---------------------------------------------------- */
 function createHash(obj) {
-  return crypto
-    .createHash("sha1")
-    .update(JSON.stringify(obj))
-    .digest("hex");
+  return crypto.createHash("sha1").update(JSON.stringify(obj)).digest("hex");
 }
 
 /* ----------------------------------------------------
@@ -32,13 +55,44 @@ async function wf(url, method, token, body) {
     body: body ? JSON.stringify(body) : undefined,
   });
 
-  const json = res.status !== 204 ? await res.json() : null;
-  if (!res.ok) throw json || (await res.text());
+  let json = null;
+  const text = await res.text();
+  try {
+    json = text ? JSON.parse(text) : null;
+  } catch {
+    json = text || null;
+  }
+
+  if (!res.ok) throw json;
   return json;
 }
 
 /* ----------------------------------------------------
-   ORIGIN
+   UNPUBLISH LIVE ITEM
+---------------------------------------------------- */
+async function unpublishLiveItem(collectionId, itemId, token) {
+  return wf(
+    `${WEBFLOW_BASE}/collections/${collectionId}/items/${itemId}/live`,
+    "DELETE",
+    token
+  );
+}
+
+/* ----------------------------------------------------
+   PUBLISH (STAGING)
+   (Webflow v2 publish endpoint auf Collection-Ebene)
+---------------------------------------------------- */
+async function publishItem(collectionId, token, itemId) {
+  return wf(
+    `${WEBFLOW_BASE}/collections/${collectionId}/items/publish`,
+    "POST",
+    token,
+    { itemIds: [itemId] }
+  );
+}
+
+/* ----------------------------------------------------
+   ORIGIN (Media Proxy)
 ---------------------------------------------------- */
 function getOrigin(req) {
   const proto = req.headers["x-forwarded-proto"] || "https";
@@ -47,9 +101,9 @@ function getOrigin(req) {
 }
 
 /* ----------------------------------------------------
-   GENERIC MAP (slug → ID)
+   GENERIC MAP (slug → ID) für eine Collection
 ---------------------------------------------------- */
-async function loadSlugMap(token, collectionId, cacheRef) {
+async function getSlugToIdMap(token, collectionId, cacheRef) {
   if (cacheRef.value) return cacheRef.value;
 
   const map = {};
@@ -84,17 +138,36 @@ export default async function handler(req, res) {
       WEBFLOW_TOKEN,
       WEBFLOW_COLLECTION,
       WEBFLOW_FEATURES_COLLECTION,
-      WEBFLOW_BEDTYPES_COLLECTION,
+      WEBFLOW_BEDTYPES_COLLECTION, // ✅ NEU
       SYS_API_USER,
       SYS_API_PASS,
     } = process.env;
+
+    if (
+      !WEBFLOW_TOKEN ||
+      !WEBFLOW_COLLECTION ||
+      !WEBFLOW_FEATURES_COLLECTION ||
+      !WEBFLOW_BEDTYPES_COLLECTION ||
+      !SYS_API_USER ||
+      !SYS_API_PASS
+    ) {
+      return res.status(500).json({
+        error:
+          "Missing ENV vars (WEBFLOW_TOKEN, WEBFLOW_COLLECTION, WEBFLOW_FEATURES_COLLECTION, WEBFLOW_BEDTYPES_COLLECTION, SYS_API_USER, SYS_API_PASS)",
+      });
+    }
 
     const limit = Math.min(parseInt(req.query.limit || "25", 10), 25);
     const dryRun = req.query.dry === "1";
     const origin = getOrigin(req);
 
     /* ----------------------------------------------
-       SYSCARA
+       OFFSET
+    ---------------------------------------------- */
+    let offset = (await redisGet(OFFSET_KEY)) || 0;
+
+    /* ----------------------------------------------
+       SYSCARA – LOAD + FILTER (PLZ 24783)
     ---------------------------------------------- */
     const auth =
       "Basic " +
@@ -103,16 +176,15 @@ export default async function handler(req, res) {
     const sysRes = await fetch("https://api.syscara.com/sale/ads/", {
       headers: { Authorization: auth },
     });
+
     if (!sysRes.ok) throw await sysRes.text();
 
     const sysAdsAll = Object.values(await sysRes.json());
 
     // ✅ NUR OSTERRÖNFELD
-    const sysAds = sysAdsAll.filter(
-      (ad) => ad?.store?.zipcode === "24783"
-    );
+    const sysAds = sysAdsAll.filter((ad) => ad?.store?.zipcode === "24783");
 
-    const batch = sysAds.slice(0, limit);
+    const batch = sysAds.slice(offset, offset + limit);
     const sysMap = new Map(sysAds.map((a) => [String(a.id), a]));
 
     /* ----------------------------------------------
@@ -138,23 +210,24 @@ export default async function handler(req, res) {
     }
 
     /* ----------------------------------------------
-       MAPS
+       FEATURE MAP + BEDTYPE MAP
     ---------------------------------------------- */
-    const featureMap = await loadSlugMap(
+    const featureMap = await getSlugToIdMap(
       WEBFLOW_TOKEN,
       WEBFLOW_FEATURES_COLLECTION,
-      { value: featureMapCache }
+      { get value() { return featureMapCache; }, set value(v) { featureMapCache = v; } }
     );
 
-    const bedTypeMap = await loadSlugMap(
+    const bedTypeMap = await getSlugToIdMap(
       WEBFLOW_TOKEN,
       WEBFLOW_BEDTYPES_COLLECTION,
-      { value: bedTypeMapCache }
+      { get value() { return bedTypeMapCache; }, set value(v) { bedTypeMapCache = v; } }
     );
 
     let created = 0;
     let updated = 0;
     let skipped = 0;
+    let deleted = 0;
     const errors = [];
 
     /* ----------------------------------------------
@@ -164,34 +237,54 @@ export default async function handler(req, res) {
       try {
         const mapped = mapVehicle(ad);
 
+        // Kilometer Fix
+        const km = parseInt(mapped.kilometer, 10);
+        mapped.kilometer = Number.isFinite(km) ? String(km) : "0";
+
         // MEDIA
         if (mapped["media-cache"]) {
           const cache = JSON.parse(mapped["media-cache"]);
 
-          if (cache.hauptbild)
+          if (cache.hauptbild) {
             mapped.hauptbild = `${origin}/api/media?id=${cache.hauptbild}`;
+          }
 
-          if (Array.isArray(cache.galerie))
+          if (Array.isArray(cache.galerie)) {
             mapped.galerie = cache.galerie
               .slice(0, 25)
               .map((id) => `${origin}/api/media?id=${id}`);
+          }
 
-          if (cache.grundriss)
+          if (cache.grundriss) {
             mapped.grundriss = `${origin}/api/media?id=${cache.grundriss}`;
+          }
         }
 
-        // FEATURES
-        mapped.features = (mapped.featureSlugs || [])
+        // FEATURES (Multi-Reference)
+        const featureIds = (mapped.featureSlugs || [])
           .map((s) => featureMap[s])
           .filter(Boolean);
         delete mapped.featureSlugs;
+        mapped.features = featureIds;
 
-        // BETTARTEN ✅
-        mapped.bettarten = (mapped.bettartenSlugs || [])
-          .map((s) => bedTypeMap[s])
+        // BETTARTEN (Multi-Reference) – robust: '-' oder '_'
+        const bedTypeIds = (mapped.bettartenSlugs || [])
+          .map((s) => {
+            // zuerst "kingsize-bed"
+            if (bedTypeMap[s]) return bedTypeMap[s];
+            // fallback "kingsize_bed"
+            const underscore = s.replace(/-/g, "_");
+            if (bedTypeMap[underscore]) return bedTypeMap[underscore];
+            return null;
+          })
           .filter(Boolean);
+
         delete mapped.bettartenSlugs;
 
+        // ✅ Feldname in Webflow: "bettarten"
+        mapped.bettarten = bedTypeIds;
+
+        // Change detection
         const hash = createHash(mapped);
         mapped["sync-hash"] = hash;
 
@@ -210,34 +303,79 @@ export default async function handler(req, res) {
               WEBFLOW_TOKEN,
               { isDraft: false, isArchived: false, fieldData: mapped }
             );
+
+            await publishItem(WEBFLOW_COLLECTION, WEBFLOW_TOKEN, existing.id);
           }
 
           updated++;
         } else {
           if (!dryRun) {
-            await wf(
+            const createdItem = await wf(
               `${WEBFLOW_BASE}/collections/${WEBFLOW_COLLECTION}/items`,
               "POST",
               WEBFLOW_TOKEN,
               { isDraft: false, isArchived: false, fieldData: mapped }
             );
+
+            await publishItem(WEBFLOW_COLLECTION, WEBFLOW_TOKEN, createdItem.id);
           }
+
           created++;
         }
       } catch (e) {
-        errors.push({ syscaraId: ad?.id, error: String(e) });
+        errors.push({
+          syscaraId: ad?.id || null,
+          error: typeof e === "string" ? e : JSON.stringify(e),
+        });
       }
+    }
+
+    /* ----------------------------------------------
+       DELETE (nicht mehr PLZ 24783 oder entfernt)
+    ---------------------------------------------- */
+    for (const [fid, item] of wfMap.entries()) {
+      if (!sysMap.has(fid)) {
+        if (!dryRun) {
+          await unpublishLiveItem(WEBFLOW_COLLECTION, item.id, WEBFLOW_TOKEN);
+          await wf(
+            `${WEBFLOW_BASE}/collections/${WEBFLOW_COLLECTION}/items/${item.id}`,
+            "DELETE",
+            WEBFLOW_TOKEN
+          );
+        }
+        deleted++;
+      }
+    }
+
+    /* ----------------------------------------------
+       OFFSET UPDATE
+    ---------------------------------------------- */
+    const nextOffset = offset + limit >= sysAds.length ? 0 : offset + limit;
+
+    if (!dryRun) {
+      await redisSet(OFFSET_KEY, nextOffset);
     }
 
     return res.status(200).json({
       ok: true,
+      dryRun,
+      limit,
+      offset,
+      nextOffset,
+      totals: {
+        syscaraFiltered: sysAds.length,
+        webflow: wfMap.size,
+      },
       created,
       updated,
       skipped,
+      deleted,
       errors,
     });
   } catch (err) {
     console.error(err);
-    return res.status(500).json({ error: String(err) });
+    return res.status(500).json({
+      error: typeof err === "string" ? err : JSON.stringify(err),
+    });
   }
 }
