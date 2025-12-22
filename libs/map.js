@@ -20,13 +20,15 @@ export function mapVehicle(ad) {
   const producer = ad.model?.producer || "";
   const series = ad.model?.series || "";
   const model = ad.model?.model || "";
-  const modelAdd = ad.model?.model_add || ""; // ✅
+  const modelAdd = ad.model?.model_add || ""; // ✅ NEU
 
   const name =
     [producer, series, model].filter(Boolean).join(" ") ||
     `Fahrzeug ${vehicleId || "unbekannt"}`;
 
-  const slug = vehicleId ? `${vehicleId}-${slugify(name)}` : slugify(name);
+  const slug = vehicleId
+    ? `${vehicleId}-${slugify(name)}`
+    : slugify(name);
 
   // ------------------------------------------------
   // 3) Basisdaten
@@ -34,30 +36,43 @@ export function mapVehicle(ad) {
   const zustand = ad.condition || "";
   const fahrzeugart = ad.type || "";
   const fahrzeugtyp = ad.typeof || "";
-  const baujahr = ad.model?.modelyear ? String(ad.model.modelyear) : "";
-  const kilometer = ad.mileage != null && ad.mileage !== 0 ? String(ad.mileage) : "";
-  const preis = ad.prices?.offer != null ? String(ad.prices.offer) : "";
+  const baujahr = ad.model?.modelyear
+    ? String(ad.model.modelyear)
+    : "";
+  const kilometer =
+    ad.mileage != null && ad.mileage !== 0
+      ? String(ad.mileage)
+      : "";
+  const preis =
+    ad.prices?.offer != null ? String(ad.prices.offer) : "";
 
   // ------------------------------------------------
   // 4) Maße & Gewichte
   // ------------------------------------------------
-  const breite = ad.dimensions?.width ? String(ad.dimensions.width) : "";
-  const hoehe = ad.dimensions?.height ? String(ad.dimensions.height) : "";
-  const laenge = ad.dimensions?.length ? String(ad.dimensions.length) : "";
-  const gesamtmasse = ad.weights?.total ? String(ad.weights.total) : "";
+  const breite = ad.dimensions?.width
+    ? String(ad.dimensions.width)
+    : "";
+  const hoehe = ad.dimensions?.height
+    ? String(ad.dimensions.height)
+    : "";
+  const laenge = ad.dimensions?.length
+    ? String(ad.dimensions.length)
+    : "";
+  const gesamtmasse = ad.weights?.total
+    ? String(ad.weights.total)
+    : "";
 
   // ------------------------------------------------
   // 5) Zulassung / Innenraum
   // ------------------------------------------------
   const erstzulassung = ad.date?.registration || "";
-  const schlafplatz = ad.beds?.num ? String(ad.beds.num) : "";
+  const schlafplatz = ad.beds?.num
+    ? String(ad.beds.num)
+    : "";
 
-  // ✅ Bettarten (nur Slugs, keine Übersetzung, kein Textfeld "bett")
-  const bedEntries = Array.isArray(ad.beds?.beds) ? ad.beds.beds : [];
-  const bettartenSlugs = bedEntries
-    .map((b) => b?.type)
-    .filter(Boolean)
-    .map((type) => String(type).toLowerCase().replace(/_/g, "-"));
+  const bett = Array.isArray(ad.beds?.beds)
+    ? ad.beds.beds.map((b) => b.type).join(", ")
+    : "";
 
   const sitzgruppe = Array.isArray(ad.seating?.seatings)
     ? ad.seating.seatings.map((s) => s.type).join(", ")
@@ -74,17 +89,21 @@ export function mapVehicle(ad) {
   // ------------------------------------------------
   // 7) Texte
   // ------------------------------------------------
-  const beschreibung = ad.texts?.description || ad.description || "";
+  const beschreibung =
+    ad.texts?.description || ad.description || "";
 
   // ------------------------------------------------
   // 8) Verkauf / Miete
   // ------------------------------------------------
-  const verkaufMiete = ad.category === "Rent" ? "miete" : "verkauf";
+  const verkaufMiete =
+    ad.category === "Rent" ? "miete" : "verkauf";
 
   // ------------------------------------------------
   // 9) Geräte-ID
   // ------------------------------------------------
-  const geraetId = ad.identifier?.internal ? String(ad.identifier.internal) : "";
+  const geraetId = ad.identifier?.internal
+    ? String(ad.identifier.internal)
+    : "";
 
   // ------------------------------------------------
   // 10) Features → SLUGS
@@ -98,8 +117,11 @@ export function mapVehicle(ad) {
   // 11) Media-Cache
   // ------------------------------------------------
   const media = Array.isArray(ad.media) ? ad.media : [];
-  const images = media.filter((m) => m && m.group === "image" && m.id);
-  const grundriss = media.find((m) => m && m.group === "layout")?.id || null;
+  const images = media.filter(
+    (m) => m && m.group === "image" && m.id
+  );
+  const grundriss =
+    media.find((m) => m && m.group === "layout")?.id || null;
 
   const mediaCache = JSON.stringify({
     hauptbild: images[0]?.id || null,
@@ -119,7 +141,7 @@ export function mapVehicle(ad) {
     hersteller: producer,
     serie: series,
     modell: model,
-    "modell-zusatz": modelAdd, // ✅
+    "modell-zusatz": modelAdd, // ✅ NEU
 
     fahrzeugart,
     fahrzeugtyp,
@@ -135,6 +157,7 @@ export function mapVehicle(ad) {
 
     erstzulassung,
     schlafplatz,
+    bett,
     sitzgruppe,
 
     ps,
@@ -147,9 +170,6 @@ export function mapVehicle(ad) {
     "verkauf-miete": verkaufMiete,
 
     featureSlugs,
-    bettartenSlugs, // ✅ NEU (Multi-Reference wird in delta-sync gemappt)
-
     "media-cache": mediaCache,
   };
 }
-
