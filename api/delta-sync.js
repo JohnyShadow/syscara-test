@@ -288,7 +288,8 @@ export default async function handler(req, res) {
           mapped.bettkategorien = bettartenIds; // ✅ API FIELD NAME
         }
 
-        const hash = createHash(mapped);
+        // Hash mit Versionsnummer, um bei Feldänderungen ein Update zu erzwingen
+        const hash = createHash({ ...mapped, _version: "1.1" });
         mapped["sync-hash"] = hash;
 
         const existing = wfMap.get(mapped["fahrzeug-id"]);
