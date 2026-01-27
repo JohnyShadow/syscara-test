@@ -296,9 +296,16 @@ export default async function handler(req, res) {
         const existing = wfMap.get(mapped["fahrzeug-id"]);
 
         if (existing) {
-          if (existing.fieldData?.["sync-hash"] === hash) {
+          const existingHash = existing.fieldData?.["sync-hash"];
+          if (existingHash === hash) {
             skipped++;
             continue;
+          } else {
+            console.log(`HASH MISMATCH for ${mapped["fahrzeug-id"]}:`);
+            console.log(`  Calculated: ${hash}`);
+            console.log(`  In Webflow: ${existingHash}`);
+            // Optional: Zeige Unterschiede in den Daten (nur im Log)
+            // console.log(`  Data: ${JSON.stringify(mapped)}`);
           }
 
           if (!dryRun) {
