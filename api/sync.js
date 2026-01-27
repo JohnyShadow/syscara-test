@@ -1,5 +1,5 @@
 // pages/api/sync.js
-import { mapVehicle } from "../libs/map.js";
+import mapVehicle from "../libs/map.js";
 
 let featureMapCache = null;
 

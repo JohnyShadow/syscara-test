@@ -91,6 +91,13 @@ export default function mapVehicle(ad) {
     "verkauf-miete":
       ad.category === "Rent" ? "miete" : "verkauf",
 
+    /* ---------------- Neue Felder ---------------- */
+    breite: ad.dimensions?.width != null ? String(ad.dimensions.width) : "",
+    hoehe: ad.dimensions?.height != null ? String(ad.dimensions.height) : "",
+    laenge: ad.dimensions?.length != null ? String(ad.dimensions.length) : "",
+    gesamtmasse: ad.weights?.total != null ? String(ad.weights.total) : "",
+    schlafplatz: ad.beds?.num != null ? String(ad.beds.num) : "",
+
     featureSlugs,
     bettartenSlugs,
 
