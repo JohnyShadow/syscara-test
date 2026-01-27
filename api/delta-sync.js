@@ -288,9 +288,10 @@ export default async function handler(req, res) {
           mapped.bettkategorien = bettartenIds; // ✅ API FIELD NAME
         }
 
-        // Hash mit Versionsnummer, um bei Feldänderungen ein Update zu erzwingen
-        // Hash ohne dynamische Bild-URLs berechnen, da diese den Origin (Host) enthalten
-        const hashData = { ...mapped, _version: "1.1" };
+        // Hash mit Versionsnummer
+        // Wir nutzen das media-cache Feld (enthält reine IDs) für den Hash, 
+        // statt der fertigen URLs mit dynamischem Hostnamen.
+        const hashData = { ...mapped, _version: "1.2" };
         delete hashData.hauptbild;
         delete hashData.galerie;
         delete hashData.grundriss;
