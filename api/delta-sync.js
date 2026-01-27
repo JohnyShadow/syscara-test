@@ -289,7 +289,13 @@ export default async function handler(req, res) {
         }
 
         // Hash mit Versionsnummer, um bei Feldänderungen ein Update zu erzwingen
-        const hash = createHash({ ...mapped, _version: "1.1" });
+        // Hash ohne dynamische Bild-URLs berechnen, da diese den Origin (Host) enthalten
+        const hashData = { ...mapped, _version: "1.1" };
+        delete hashData.hauptbild;
+        delete hashData.galerie;
+        delete hashData.grundriss;
+        
+        const hash = createHash(hashData);
         mapped["sync-hash"] = hash;
 
         const existing = wfMap.get(mapped["fahrzeug-id"]);
