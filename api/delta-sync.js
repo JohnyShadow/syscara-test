@@ -396,7 +396,8 @@ export default async function handler(req, res) {
     const nextOffset =
       offset + limit >= sysAds.length ? 0 : offset + limit;
 
-    if (!dryRun) {
+    // TEST-MODUS: Offset wird nicht weitergeschaltet, um dieselben Fahrzeuge erneut zu prüfen
+    if (!dryRun && false) {
       await redisSet(OFFSET_KEY, nextOffset);
     }
 
