@@ -288,25 +288,13 @@ export default async function handler(req, res) {
           mapped.bettkategorien = bettartenIds; // ✅ API FIELD NAME
         }
 
-        // 🔐 STABILER CLEAN HASH v2.0
-        const cleanData = {
-          id: ad.id,
-          price: ad.prices?.offer,
-          mileage: ad.mileage,
-          images: JSON.parse(mapped["media-cache"]), // Stabile IDs
-          dimensions: ad.dimensions,
-          weights: ad.weights,
-          beds: ad.beds?.num,
-          _v: "2.0"
-        };
-        const hash = createHash(cleanData);
+        const hash = createHash(mapped);
         mapped["sync-hash"] = hash;
 
         const existing = wfMap.get(mapped["fahrzeug-id"]);
 
         if (existing) {
-          const existingHash = existing.fieldData?.["sync-hash"];
-          if (existingHash === hash) {
+          if (existing.fieldData?.["sync-hash"] === hash) {
             skipped++;
             continue;
           }
